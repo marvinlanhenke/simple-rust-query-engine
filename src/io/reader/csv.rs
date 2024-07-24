@@ -39,13 +39,13 @@ impl CsvReadOptionsBuilder {
     }
 
     /// Adds a byte for the `delimiter`.
-    pub fn delimiter(mut self, delimiter: u8) -> Self {
+    pub fn with_delimiter(mut self, delimiter: u8) -> Self {
         self.delimiter = delimiter;
         self
     }
 
     /// Adds a byte for the `quote`.
-    pub fn quote(mut self, quote: u8) -> Self {
+    pub fn with_quote(mut self, quote: u8) -> Self {
         self.quote = quote;
         self
     }
@@ -192,5 +192,21 @@ mod tests {
         let expected = Arc::new(create_schema());
 
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_csv_options_builder() {
+        let schema = Arc::new(create_schema());
+        let options = CsvReadOptions::builder()
+            .with_header(false)
+            .with_delimiter(b',')
+            .with_quote(b'"')
+            .with_schema(Some(schema.clone()))
+            .build();
+
+        assert!(!options.has_header);
+        assert_eq!(options.delimiter, b',');
+        assert_eq!(options.quote, b'"');
+        assert_eq!(options.schema, Some(schema));
     }
 }
