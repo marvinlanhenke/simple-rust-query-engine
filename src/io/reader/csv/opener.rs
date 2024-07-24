@@ -1,11 +1,12 @@
 use std::{fs::File, io::Read};
 
+use async_stream::try_stream;
 use futures::StreamExt;
 
 use super::options::CsvFileOpenerConfig;
 use crate::{
     error::Result,
-    io::{FileOpenFuture, FileOpener},
+    io::{FileOpener, RecordBatchStream},
 };
 
 /// Responsible for opening CSV files with provided configurations.
@@ -44,13 +45,17 @@ impl FileOpener for CsvFileOpener {
     /// of `RecordBatch` results from a CSV reader.
     ///
     /// Returns a pinned future that yields the boxed stream.
-    fn open(&self, path: &str) -> Result<FileOpenFuture> {
+    fn open(&self, path: &str) -> Result<RecordBatchStream> {
         let file = File::open(path)?;
         let reader = self.reader(file)?;
-        let boxed_stream = futures::stream::iter(reader).boxed();
-        let file_open_future = Box::pin(async move { Ok(boxed_stream) });
 
-        Ok(file_open_future)
+        let stream = try_stream! {
+            for batch in reader {
+                yield batch?
+            }
+        };
+
+        Ok(stream.boxed())
     }
 }
 
@@ -71,11 +76,7 @@ mod tests {
         let config = CsvFileOpenerConfig::new(schema);
         let opener = CsvFileOpener::new(config);
 
-        let mut stream = opener
-            .open("testdata/csv/simple.csv")
-            .unwrap()
-            .await
-            .unwrap();
+        let mut stream = opener.open("testdata/csv/simple.csv").unwrap();
         while let Some(Ok(batch)) = stream.next().await {
             assert_eq!(batch.num_rows(), 6);
             assert_eq!(batch.num_columns(), 3);
@@ -90,11 +91,7 @@ mod tests {
             .build();
         let opener = CsvFileOpener::new(config);
 
-        let mut stream = opener
-            .open("testdata/csv/simple.csv")
-            .unwrap()
-            .await
-            .unwrap();
+        let mut stream = opener.open("testdata/csv/simple.csv").unwrap();
         while let Some(Ok(batch)) = stream.next().await {
             assert_eq!(batch.num_rows(), 1);
             assert_eq!(batch.num_columns(), 3);
