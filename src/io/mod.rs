@@ -24,4 +24,6 @@ pub trait FileOpener {
 pub trait DataSource {
     /// A reference-counted [`arrow::datatypes::Schema`].
     fn schema(&self) -> SchemaRef;
+    /// TODO: this should return the (physical) execution plan
+    fn scan(&self) -> Result<()>;
 }
