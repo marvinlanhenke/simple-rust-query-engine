@@ -14,6 +14,11 @@ pub enum Error {
         message: String,
         location: snafu::Location,
     },
+    #[snafu(display("ArrowError: {message}, {location}"))]
+    Arrow {
+        message: String,
+        location: snafu::Location,
+    },
 }
 
 trait ToSnafuLocation {
@@ -40,3 +45,4 @@ macro_rules! make_error_from {
 }
 
 make_error_from!(std::io::Error, Io);
+make_error_from!(arrow::error::ArrowError, Arrow);
