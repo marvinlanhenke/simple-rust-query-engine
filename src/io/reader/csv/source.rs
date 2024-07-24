@@ -78,19 +78,12 @@ impl DataSource for CsvDataSource {
 mod tests {
     use std::sync::Arc;
 
-    use arrow::datatypes::{DataType, Field, Schema};
-
-    use crate::io::{reader::csv::options::CsvReadOptions, DataSource};
+    use crate::io::{
+        reader::csv::{options::CsvReadOptions, tests::create_schema},
+        DataSource,
+    };
 
     use super::CsvDataSource;
-
-    fn create_schema() -> Schema {
-        Schema::new(vec![
-            Field::new("c1", DataType::Utf8, true),
-            Field::new("c2", DataType::Int64, true),
-            Field::new("c3", DataType::Int64, true),
-        ])
-    }
 
     #[test]
     fn test_csv_datasource_infer_schema() {

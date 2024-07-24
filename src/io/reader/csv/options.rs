@@ -257,17 +257,9 @@ impl CsvFileOpenerConfig {
 mod tests {
     use std::sync::Arc;
 
-    use arrow::datatypes::{DataType, Field, Schema};
+    use crate::io::reader::csv::tests::create_schema;
 
     use super::{CsvFileOpenerConfig, CsvReadOptions};
-
-    fn create_schema() -> Schema {
-        Schema::new(vec![
-            Field::new("c1", DataType::Utf8, true),
-            Field::new("c2", DataType::Int64, true),
-            Field::new("c3", DataType::Int64, true),
-        ])
-    }
 
     #[test]
     fn test_csv_file_config_builder() {
