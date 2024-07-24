@@ -2,7 +2,7 @@ use std::{fs::File, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 
-use crate::error::Result;
+use crate::{error::Result, io::DataSource};
 
 /// How many records should be read in order to infer the CSV schema.
 const MAX_INFER_RECORDS: usize = 100;
@@ -138,11 +138,6 @@ impl CsvDataSource {
         self.path.as_ref()
     }
 
-    /// A reference-counted [`arrow::datatypes::Schema`].
-    pub fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-
     /// A [`CsvReadOptions`] reference.
     pub fn options(&self) -> &CsvReadOptions {
         &self.options
@@ -166,11 +161,19 @@ impl CsvDataSource {
     }
 }
 
+impl DataSource for CsvDataSource {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use arrow::datatypes::{DataType, Field, Schema};
+
+    use crate::io::DataSource;
 
     use super::{CsvDataSource, CsvReadOptions};
 
