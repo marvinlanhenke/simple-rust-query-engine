@@ -257,7 +257,7 @@ impl CsvFileOpenerConfig {
 mod tests {
     use std::sync::Arc;
 
-    use crate::io::reader::csv::tests::create_schema;
+    use crate::tests::create_schema;
 
     use super::{CsvFileOpenerConfig, CsvReadOptions};
 

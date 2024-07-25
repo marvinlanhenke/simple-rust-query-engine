@@ -78,9 +78,9 @@ impl DataSource for CsvDataSource {
 mod tests {
     use std::sync::Arc;
 
-    use crate::io::{
-        reader::csv::{options::CsvReadOptions, tests::create_schema},
-        DataSource,
+    use crate::{
+        io::{reader::csv::options::CsvReadOptions, DataSource},
+        tests::create_schema,
     };
 
     use super::CsvDataSource;

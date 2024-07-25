@@ -65,9 +65,12 @@ mod tests {
 
     use futures::StreamExt;
 
-    use crate::io::{
-        reader::csv::{opener::CsvFileOpener, options::CsvFileOpenerConfig, tests::create_schema},
-        FileOpener,
+    use crate::{
+        io::{
+            reader::csv::{opener::CsvFileOpener, options::CsvFileOpenerConfig},
+            FileOpener,
+        },
+        tests::create_schema,
     };
 
     #[tokio::test]
