@@ -20,6 +20,7 @@ impl Planner {
                 let projection = plan.projection();
                 source.scan(projection)
             }
+            Projection(_plan) => todo!(),
         }
     }
 }

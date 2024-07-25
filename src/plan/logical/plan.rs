@@ -4,13 +4,14 @@ use arrow::datatypes::SchemaRef;
 
 use crate::expression::logical::expr::Expression;
 
-use super::scan::Scan;
+use super::{projection::Projection, scan::Scan};
 
 /// Represents a [`LogicalPlan`] for query execution.
 #[derive(Debug)]
 pub enum LogicalPlan {
     /// A [`Scan`] operation on the [`DataSource`].
     Scan(Scan),
+    Projection(Projection),
 }
 
 impl LogicalPlan {
@@ -18,20 +19,23 @@ impl LogicalPlan {
     pub fn schema(&self) -> SchemaRef {
         match self {
             LogicalPlan::Scan(plan) => plan.schema(),
+            LogicalPlan::Projection(plan) => plan.schema(),
         }
     }
 
     /// Retrieves the child logical plans.
-    pub fn children(&self) -> &[&LogicalPlan] {
+    pub fn children(&self) -> Vec<&LogicalPlan> {
         match self {
             LogicalPlan::Scan(plan) => plan.children(),
+            LogicalPlan::Projection(plan) => plan.children(),
         }
     }
 
     /// Retrieves the expressions associated with the logical plan.
-    pub fn expressions(&self) -> &[&Expression] {
+    pub fn expressions(&self) -> &[Expression] {
         match self {
             LogicalPlan::Scan(plan) => plan.expressions(),
+            LogicalPlan::Projection(plan) => plan.expressions(),
         }
     }
 
@@ -43,6 +47,7 @@ impl LogicalPlan {
 
         match self {
             LogicalPlan::Scan(plan) => write!(f, "{}", plan)?,
+            LogicalPlan::Projection(plan) => write!(f, "{}", plan)?,
         }
         writeln!(f)?;
 

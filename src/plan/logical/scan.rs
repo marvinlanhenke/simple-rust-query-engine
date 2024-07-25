@@ -53,12 +53,12 @@ impl Scan {
     /// Retrieves the child logical plans.
     ///
     /// Since [`Scan`] has no children, this returns an empty slice.
-    pub fn children(&self) -> &[&LogicalPlan] {
-        &[]
+    pub fn children(&self) -> Vec<&LogicalPlan> {
+        vec![]
     }
 
     /// Retrieves the filter expressions applied to [`Scan`].
-    pub fn expressions(&self) -> &[&Expression] {
+    pub fn expressions(&self) -> &[Expression] {
         &[]
     }
 }
