@@ -195,7 +195,7 @@ impl CsvFileOpenerConfigBuilder {
 
 /// Configuration parameters for opening,
 /// reading, and streaming the contents of a CSV file.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CsvFileOpenerConfig {
     /// The number of records to read per batch.
     batch_size: usize,
