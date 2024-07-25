@@ -62,3 +62,48 @@ impl Display for CsvExec {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use futures::StreamExt;
+
+    use crate::{
+        io::reader::csv::options::CsvFileOpenerConfig,
+        plan::physical::{plan::ExecutionPlan, scan::csv::CsvExec},
+        tests::create_schema,
+    };
+
+    #[tokio::test]
+    async fn test_csv_exec_with_projection() {
+        let schema = Arc::new(create_schema());
+        let projection = Some(vec![0]);
+        let config = CsvFileOpenerConfig::builder(schema)
+            .with_batch_size(1)
+            .with_projection(projection)
+            .build();
+        let exec = CsvExec::new("testdata/csv/simple.csv", config);
+        let mut stream = exec.execute().unwrap();
+
+        while let Some(Ok(batch)) = stream.next().await {
+            assert_eq!(batch.num_rows(), 1);
+            assert_eq!(batch.num_columns(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_csv_exec_no_projection() {
+        let schema = Arc::new(create_schema());
+        let config = CsvFileOpenerConfig::builder(schema)
+            .with_batch_size(1)
+            .build();
+        let exec = CsvExec::new("testdata/csv/simple.csv", config);
+        let mut stream = exec.execute().unwrap();
+
+        while let Some(Ok(batch)) = stream.next().await {
+            assert_eq!(batch.num_rows(), 1);
+            assert_eq!(batch.num_columns(), 3);
+        }
+    }
+}
