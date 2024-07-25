@@ -1,5 +1,7 @@
 //! # Simple Rust Query Engine
 
+pub mod context;
+pub mod dataframe;
 pub mod error;
 pub mod expression;
 pub mod io;
