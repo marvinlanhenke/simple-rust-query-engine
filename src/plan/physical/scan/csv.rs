@@ -24,6 +24,14 @@ impl CsvExec {
             config,
         }
     }
+
+    pub fn path(&self) -> &str {
+        self.path.as_ref()
+    }
+
+    pub fn config(&self) -> &CsvFileOpenerConfig {
+        &self.config
+    }
 }
 
 impl ExecutionPlan for CsvExec {
