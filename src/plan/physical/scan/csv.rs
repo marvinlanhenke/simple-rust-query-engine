@@ -11,6 +11,7 @@ use crate::{
     plan::physical::plan::ExecutionPlan,
 };
 
+/// Represents an [`ExecutionPlan`] for reading CSV files.
 #[derive(Debug)]
 pub struct CsvExec {
     path: String,
@@ -18,6 +19,7 @@ pub struct CsvExec {
 }
 
 impl CsvExec {
+    /// Creates a new [`CsvExec`] instance.
     pub fn new(path: impl Into<String>, config: CsvFileOpenerConfig) -> Self {
         Self {
             path: path.into(),
@@ -25,10 +27,12 @@ impl CsvExec {
         }
     }
 
+    /// Retrieves the path to the CSV file.
     pub fn path(&self) -> &str {
         self.path.as_ref()
     }
 
+    /// Retrieves the [`CsvFileOpenerConfig`].
     pub fn config(&self) -> &CsvFileOpenerConfig {
         &self.config
     }
