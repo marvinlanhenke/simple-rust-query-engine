@@ -2,7 +2,11 @@ use std::{fs::File, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 
-use crate::{error::Result, io::DataSource};
+use crate::{
+    error::Result,
+    io::{reader::csv::options::CsvFileOpenerConfig, DataSource},
+    plan::physical::{plan::ExecutionPlan, scan::csv::CsvExec},
+};
 
 use super::{options::CsvReadOptions, MAX_INFER_RECORDS};
 
@@ -69,8 +73,18 @@ impl DataSource for CsvDataSource {
         self.schema.clone()
     }
 
-    fn scan(&self) -> Result<()> {
-        Ok(())
+    fn scan(&self, projection: Option<&Vec<String>>) -> Result<Arc<dyn ExecutionPlan>> {
+        let projection_idx = projection.map(|proj| {
+            proj.iter()
+                .filter_map(|name| self.schema.column_with_name(name).map(|(idx, _)| idx))
+                .collect::<Vec<_>>()
+        });
+        let config = CsvFileOpenerConfig::builder(self.schema.clone())
+            .with_projection(projection_idx)
+            .build();
+        let exec = CsvExec::new(&self.path, config);
+
+        Ok(Arc::new(exec))
     }
 }
 
@@ -80,10 +94,23 @@ mod tests {
 
     use crate::{
         io::{reader::csv::options::CsvReadOptions, DataSource},
+        plan::physical::scan::csv::CsvExec,
         tests::create_schema,
     };
 
     use super::CsvDataSource;
+
+    #[test]
+    fn test_csv_datasource_scan_with_projection() {
+        let options = CsvReadOptions::new();
+        let path = "testdata/csv/simple.csv";
+        let source = CsvDataSource::try_new(path, options).unwrap();
+        let projection = Some(vec!["c1".to_string()]);
+
+        let exec = source.scan(projection.as_ref()).unwrap();
+        let exec = exec.as_any().downcast_ref::<CsvExec>().unwrap();
+        assert!(exec.config().projection().is_some());
+    }
 
     #[test]
     fn test_csv_datasource_infer_schema() {

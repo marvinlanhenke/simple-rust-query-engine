@@ -1,9 +1,9 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 use arrow::{array::RecordBatch, datatypes::SchemaRef};
 use futures::stream::BoxStream;
 
-use crate::error::Result;
+use crate::{error::Result, plan::physical::plan::ExecutionPlan};
 
 pub mod reader;
 pub mod writer;
@@ -24,6 +24,7 @@ pub trait FileOpener {
 pub trait DataSource: Debug {
     /// A reference-counted [`arrow::datatypes::Schema`].
     fn schema(&self) -> SchemaRef;
-    /// TODO: this should return the (physical) execution plan
-    fn scan(&self) -> Result<()>;
+
+    /// Creates an [`ExecutionPlan`] to scan the [`DataSource`].
+    fn scan(&self, projection: Option<&Vec<String>>) -> Result<Arc<dyn ExecutionPlan>>;
 }
