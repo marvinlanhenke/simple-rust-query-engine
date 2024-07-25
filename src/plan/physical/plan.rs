@@ -1,11 +1,14 @@
-use std::{any::Any, fmt::Display};
+use std::{
+    any::Any,
+    fmt::{Debug, Display},
+};
 
 use arrow::datatypes::SchemaRef;
 
 use crate::{error::Result, io::RecordBatchStream};
 
 /// A trait to represent an [`ExecutionPlan`] for query execution.
-pub trait ExecutionPlan: Display {
+pub trait ExecutionPlan: Display + Debug {
     /// Returns a reference to self as a `dyn Any`.
     fn as_any(&self) -> &dyn Any;
 
@@ -17,6 +20,9 @@ pub trait ExecutionPlan: Display {
 
     /// Executes the [`ExecutionPlan`] and returns a stream of `RecordBatch`'es.
     fn execute(&self) -> Result<RecordBatchStream>;
+
+    /// Format the [`ExecutionPlan`] to string.
+    fn format(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
 }
 
 pub fn format_exec(

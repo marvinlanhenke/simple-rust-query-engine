@@ -8,7 +8,7 @@ use crate::{
         reader::csv::{opener::CsvFileOpener, options::CsvFileOpenerConfig},
         FileOpener, RecordBatchStream,
     },
-    plan::physical::plan::ExecutionPlan,
+    plan::physical::plan::{format_exec, ExecutionPlan},
 };
 
 /// Represents an [`ExecutionPlan`] for reading CSV files.
@@ -55,10 +55,8 @@ impl ExecutionPlan for CsvExec {
         let opener = CsvFileOpener::new(&self.config);
         opener.open(&self.path)
     }
-}
 
-impl Display for CsvExec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn format(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.config.projection() {
             None => write!(
                 f,
@@ -72,6 +70,12 @@ impl Display for CsvExec {
                 projection
             ),
         }
+    }
+}
+
+impl Display for CsvExec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        format_exec(self, f, 0)
     }
 }
 
