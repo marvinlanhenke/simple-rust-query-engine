@@ -4,7 +4,7 @@ use arrow::datatypes::SchemaRef;
 
 use crate::{expression::logical::expr::Expression, io::DataSource};
 
-use super::plans::LogicalPlan;
+use super::plan::LogicalPlan;
 
 /// A scan operation on a [`DataSource`].
 #[derive(Debug)]
