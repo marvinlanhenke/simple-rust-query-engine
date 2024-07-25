@@ -35,6 +35,16 @@ impl Scan {
         }
     }
 
+    /// A reference-counted [`DataSource`].
+    pub fn source(&self) -> Arc<dyn DataSource> {
+        self.source.clone()
+    }
+
+    /// An optional list of column names to project
+    pub fn projection(&self) -> Option<&Vec<String>> {
+        self.projection.as_ref()
+    }
+
     /// A reference-counted [`arrow::datatypes::Schema`] of the data source.
     pub fn schema(&self) -> SchemaRef {
         self.source.schema()
