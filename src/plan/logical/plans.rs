@@ -6,30 +6,36 @@ use crate::expression::logical::expr::Expression;
 
 use super::scan::Scan;
 
+/// Represents a [`LogicalPlan`] for query execution.
 #[derive(Debug)]
 pub enum LogicalPlan {
+    /// A [`Scan`] operation on the [`DataSource`].
     Scan(Scan),
 }
 
 impl LogicalPlan {
+    /// A reference-counted [`arrow::datatypes::Schema`].
     pub fn schema(&self) -> SchemaRef {
         match self {
             LogicalPlan::Scan(plan) => plan.schema(),
         }
     }
 
+    /// Retrieves the child logical plans.
     pub fn children(&self) -> &[&LogicalPlan] {
         match self {
             LogicalPlan::Scan(plan) => plan.children(),
         }
     }
 
+    /// Retrieves the expressions associated with the logical plan.
     pub fn expressions(&self) -> &[&Expression] {
         match self {
             LogicalPlan::Scan(plan) => plan.expressions(),
         }
     }
 
+    /// Formats the logical plan for display purposes with indentation.
     fn format(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
         for _ in 0..indent {
             write!(f, "\t")?;
