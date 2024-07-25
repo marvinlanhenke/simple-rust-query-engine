@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use arrow::{array::RecordBatch, datatypes::SchemaRef};
 use futures::stream::BoxStream;
 
@@ -19,7 +21,7 @@ pub trait FileOpener {
     fn open(&self, path: &str) -> Result<RecordBatchStream>;
 }
 
-pub trait DataSource {
+pub trait DataSource: Debug {
     /// A reference-counted [`arrow::datatypes::Schema`].
     fn schema(&self) -> SchemaRef;
     /// TODO: this should return the (physical) execution plan
