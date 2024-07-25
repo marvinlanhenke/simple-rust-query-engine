@@ -15,13 +15,13 @@ use crate::{
 /// CSV files, by wrapping the [`arrow::csv::Reader`] with a boxed stream,
 /// yielding instances of [`arrow::array::RecordBatch`].
 #[derive(Debug)]
-pub struct CsvFileOpener {
-    config: CsvFileOpenerConfig,
+pub struct CsvFileOpener<'a> {
+    config: &'a CsvFileOpenerConfig,
 }
 
-impl CsvFileOpener {
+impl<'a> CsvFileOpener<'a> {
     /// Creates a [`CsvFileOpener`] with specified configuration.
-    pub fn new(config: CsvFileOpenerConfig) -> Self {
+    pub fn new(config: &'a CsvFileOpenerConfig) -> Self {
         Self { config }
     }
 
@@ -40,7 +40,7 @@ impl CsvFileOpener {
     }
 }
 
-impl FileOpener for CsvFileOpener {
+impl<'a> FileOpener for CsvFileOpener<'a> {
     /// Opens the file at the specified path and creates a boxed stream
     /// of `RecordBatch` results from a CSV reader.
     ///
@@ -77,7 +77,7 @@ mod tests {
     async fn test_csv_file_opener() {
         let schema = Arc::new(create_schema());
         let config = CsvFileOpenerConfig::new(schema);
-        let opener = CsvFileOpener::new(config);
+        let opener = CsvFileOpener::new(&config);
 
         let mut stream = opener.open("testdata/csv/simple.csv").unwrap();
         while let Some(Ok(batch)) = stream.next().await {
@@ -92,7 +92,7 @@ mod tests {
         let config = CsvFileOpenerConfig::builder(schema)
             .with_batch_size(1)
             .build();
-        let opener = CsvFileOpener::new(config);
+        let opener = CsvFileOpener::new(&config);
 
         let mut stream = opener.open("testdata/csv/simple.csv").unwrap();
         while let Some(Ok(batch)) = stream.next().await {

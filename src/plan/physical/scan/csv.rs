@@ -40,7 +40,7 @@ impl ExecutionPlan for CsvExec {
     }
 
     fn execute(&self) -> Result<RecordBatchStream> {
-        let opener = CsvFileOpener::new(self.config.clone());
+        let opener = CsvFileOpener::new(&self.config);
         opener.open(&self.path)
     }
 }
