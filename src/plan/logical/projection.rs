@@ -51,6 +51,6 @@ impl Display for Projection {
             .map(|e| e.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        write!(f, "Projection: {}", exprs)
+        write!(f, "Projection: [{}]", exprs)
     }
 }

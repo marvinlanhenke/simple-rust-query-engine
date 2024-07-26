@@ -38,31 +38,35 @@ impl LogicalPlan {
             LogicalPlan::Projection(plan) => plan.expressions(),
         }
     }
-
-    /// Formats the logical plan for display purposes with indentation.
-    fn format(&self, f: &mut std::fmt::Formatter<'_>, indent: usize) -> std::fmt::Result {
-        for _ in 0..indent {
-            write!(f, "\t")?;
-        }
-
-        match self {
-            LogicalPlan::Scan(plan) => write!(f, "{}", plan)?,
-            LogicalPlan::Projection(plan) => write!(f, "{}", plan)?,
-        }
-        writeln!(f)?;
-
-        for child in self.children() {
-            child.format(f, indent + 1)?;
-        }
-
-        Ok(())
-    }
 }
 
 impl Display for LogicalPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.format(f, 0)
+        format_plan(self, f, 0)
     }
+}
+
+/// Formats the logical plan for display purposes with indentation.
+pub fn format_plan(
+    input: &LogicalPlan,
+    f: &mut std::fmt::Formatter<'_>,
+    indent: usize,
+) -> std::fmt::Result {
+    for _ in 0..indent {
+        write!(f, "\t")?;
+    }
+
+    match input {
+        LogicalPlan::Scan(plan) => write!(f, "{}", plan)?,
+        LogicalPlan::Projection(plan) => write!(f, "{}", plan)?,
+    }
+    writeln!(f)?;
+
+    for child in input.children() {
+        format_plan(child, f, indent + 1)?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
