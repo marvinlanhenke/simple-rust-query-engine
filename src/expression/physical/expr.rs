@@ -8,12 +8,12 @@ use arrow::{
     datatypes::{DataType, Schema},
 };
 
-use crate::error::Result;
+use crate::{error::Result, expression::scalar::ColumnarValue};
 
 pub trait PhysicalExpression: Display + Debug + Send + Sync {
     fn as_any(&self) -> &dyn Any;
 
     fn data_type(&self, schema: &Schema) -> Result<DataType>;
 
-    fn eval(&self, input: &RecordBatch) -> Result<()>;
+    fn eval(&self, input: &RecordBatch) -> Result<ColumnarValue>;
 }

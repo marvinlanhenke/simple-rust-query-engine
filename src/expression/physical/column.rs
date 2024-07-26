@@ -1,4 +1,4 @@
-use std::{any::Any, fmt::Display};
+use std::{any::Any, fmt::Display, sync::Arc};
 
 use arrow::{
     array::RecordBatch,
@@ -6,7 +6,10 @@ use arrow::{
 };
 use snafu::location;
 
-use crate::error::{Error, Result};
+use crate::{
+    error::{Error, Result},
+    expression::scalar::ColumnarValue,
+};
 
 use super::expr::PhysicalExpression;
 
@@ -47,8 +50,10 @@ impl PhysicalExpression for ColumnExpr {
         Ok(schema.field(self.index).data_type().clone())
     }
 
-    fn eval(&self, _input: &RecordBatch) -> Result<()> {
-        Ok(())
+    fn eval(&self, input: &RecordBatch) -> Result<ColumnarValue> {
+        let array = Arc::new(input.column(self.index).clone());
+
+        Ok(ColumnarValue::Array(array))
     }
 }
 
