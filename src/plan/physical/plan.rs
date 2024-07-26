@@ -34,7 +34,7 @@ pub fn format_exec(
     for _ in 0..indent {
         write!(f, "\t")?;
     }
-    write!(f, "{}", input)?;
+    write!(f, "{}", input.format())?;
     writeln!(f)?;
 
     for child in input.children() {
