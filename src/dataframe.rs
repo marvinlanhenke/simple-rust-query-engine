@@ -6,7 +6,7 @@ use crate::{
     expression::logical::expr::Expression,
     plan::{
         logical::{plan::LogicalPlan, projection::Projection},
-        physical::planner::Planner,
+        planner::Planner,
     },
 };
 

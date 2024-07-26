@@ -12,7 +12,7 @@ use crate::{
     plan::{logical::plan::LogicalPlan, physical::projection::ProjectionExec},
 };
 
-use super::plan::ExecutionPlan;
+use super::physical::plan::ExecutionPlan;
 
 /// The query [`Planner`].
 ///
