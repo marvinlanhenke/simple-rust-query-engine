@@ -3,7 +3,11 @@ use futures::TryStreamExt;
 
 use crate::{
     error::Result,
-    plan::{logical::plan::LogicalPlan, physical::planner::Planner},
+    expression::logical::expr::Expression,
+    plan::{
+        logical::{plan::LogicalPlan, projection::Projection},
+        physical::planner::Planner,
+    },
 };
 
 /// Represents a [`DataFrame`] for query execution and data manipulation.
@@ -32,11 +36,36 @@ impl DataFrame {
 
         stream.try_collect().await
     }
+
+    /// Projects the selected columns on the [`DataFrame`].
+    pub fn select(self, columns: Vec<Expression>) -> Self {
+        let input = self.plan;
+        let plan = LogicalPlan::Projection(Projection::new(Box::new(input), columns));
+
+        Self { plan }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{context::SessionContext, io::reader::csv::options::CsvReadOptions};
+    use crate::{
+        context::SessionContext, expression::logical::expr_fn::col,
+        io::reader::csv::options::CsvReadOptions,
+    };
+
+    #[tokio::test]
+    async fn test_dataframe_select_csv() {
+        let ctx = SessionContext::new();
+        let df = ctx
+            .read_csv("testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap()
+            .select(vec![col("c1"), col("c3")]);
+
+        let result = df.collect().await.unwrap();
+
+        assert_eq!(result[0].num_rows(), 6);
+        assert_eq!(result[0].num_columns(), 2);
+    }
 
     #[tokio::test]
     async fn test_dataframe_collect_csv() {
