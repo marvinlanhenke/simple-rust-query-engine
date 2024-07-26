@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 
@@ -10,14 +10,14 @@ use super::plan::LogicalPlan;
 #[derive(Debug)]
 pub struct Projection {
     /// The input [`LogicalPlan`].
-    input: Box<LogicalPlan>,
+    input: Arc<LogicalPlan>,
     /// A list of expressions to apply.
     expression: Vec<Expression>,
 }
 
 impl Projection {
     /// Creates a new [`Projection`] instance.
-    pub fn new(input: Box<LogicalPlan>, expression: Vec<Expression>) -> Self {
+    pub fn new(input: Arc<LogicalPlan>, expression: Vec<Expression>) -> Self {
         Self { input, expression }
     }
 

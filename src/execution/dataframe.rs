@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use arrow::{array::RecordBatch, util::pretty};
 use futures::TryStreamExt;
 
@@ -40,7 +42,7 @@ impl DataFrame {
     /// Projects the selected columns on the [`DataFrame`].
     pub fn select(self, columns: Vec<Expression>) -> Self {
         let input = self.plan;
-        let plan = LogicalPlan::Projection(Projection::new(Box::new(input), columns));
+        let plan = LogicalPlan::Projection(Projection::new(Arc::new(input), columns));
 
         Self { plan }
     }
