@@ -21,6 +21,11 @@ impl Projection {
         Self { input, expression }
     }
 
+    /// A reference to the input [`LogicalPlan`].
+    pub fn input(&self) -> &LogicalPlan {
+        &self.input
+    }
+
     /// A reference-counted [`arrow::datatypes::Schema`] of the data source.
     pub fn schema(&self) -> SchemaRef {
         // return projected schema instead?
