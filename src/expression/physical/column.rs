@@ -8,7 +8,7 @@ use snafu::location;
 
 use crate::{
     error::{Error, Result},
-    expression::scalar::ColumnarValue,
+    expression::values::ColumnarValue,
 };
 
 use super::expr::PhysicalExpression;
@@ -72,7 +72,7 @@ mod tests {
     use arrow::datatypes::DataType;
 
     use crate::{
-        expression::{physical::expr::PhysicalExpression, scalar::ColumnarValue},
+        expression::{physical::expr::PhysicalExpression, values::ColumnarValue},
         tests::{create_record_batch, create_schema},
     };
 

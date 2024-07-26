@@ -8,7 +8,7 @@ use arrow::{
     datatypes::{DataType, Schema},
 };
 
-use crate::{error::Result, expression::scalar::ColumnarValue};
+use crate::{error::Result, expression::values::ColumnarValue};
 
 /// A trait representing a [`PhysicalExpression`] in an [`ExecutionPlan`].
 pub trait PhysicalExpression: Display + Debug + Send + Sync {

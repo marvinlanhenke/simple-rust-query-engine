@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{error::Result, expression::scalar::ScalarValue, plan::logical::plan::LogicalPlan};
+use crate::{error::Result, expression::values::ScalarValue, plan::logical::plan::LogicalPlan};
 use arrow::datatypes::Field;
 
 use super::column::Column;
