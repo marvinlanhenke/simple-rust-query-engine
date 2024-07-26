@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use crate::{
-    dataframe::DataFrame,
     error::Result,
     io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
     plan::logical::{plan::LogicalPlan, scan::Scan},
 };
+
+use super::dataframe::DataFrame;
 
 /// Represents a [`SessionContext`] for managing query execution.
 #[derive(Debug, Default)]

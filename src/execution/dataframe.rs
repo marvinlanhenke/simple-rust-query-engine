@@ -49,7 +49,7 @@ impl DataFrame {
 #[cfg(test)]
 mod tests {
     use crate::{
-        context::SessionContext, expression::logical::expr_fn::col,
+        execution::context::SessionContext, expression::logical::expr_fn::col,
         io::reader::csv::options::CsvReadOptions,
     };
 
