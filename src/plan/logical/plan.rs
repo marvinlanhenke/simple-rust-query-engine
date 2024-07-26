@@ -4,7 +4,7 @@ use arrow::datatypes::SchemaRef;
 
 use crate::expression::logical::expr::Expression;
 
-use super::{projection::Projection, scan::Scan};
+use super::{filter::Filter, projection::Projection, scan::Scan};
 
 /// Represents a [`LogicalPlan`] for query execution.
 #[derive(Debug)]
@@ -12,6 +12,7 @@ pub enum LogicalPlan {
     /// A [`Scan`] operation on the [`DataSource`].
     Scan(Scan),
     Projection(Projection),
+    Filter(Filter),
 }
 
 impl LogicalPlan {
@@ -20,6 +21,7 @@ impl LogicalPlan {
         match self {
             LogicalPlan::Scan(plan) => plan.schema(),
             LogicalPlan::Projection(plan) => plan.schema(),
+            LogicalPlan::Filter(plan) => plan.schema(),
         }
     }
 
@@ -28,6 +30,7 @@ impl LogicalPlan {
         match self {
             LogicalPlan::Scan(plan) => plan.children(),
             LogicalPlan::Projection(plan) => plan.children(),
+            LogicalPlan::Filter(plan) => plan.children(),
         }
     }
 
@@ -36,6 +39,7 @@ impl LogicalPlan {
         match self {
             LogicalPlan::Scan(plan) => plan.expressions(),
             LogicalPlan::Projection(plan) => plan.expressions(),
+            LogicalPlan::Filter(plan) => plan.expressions(),
         }
     }
 }
@@ -59,6 +63,7 @@ pub fn format_plan(
     match input {
         LogicalPlan::Scan(plan) => write!(f, "{}", plan)?,
         LogicalPlan::Projection(plan) => write!(f, "{}", plan)?,
+        LogicalPlan::Filter(plan) => write!(f, "{}", plan)?,
     }
     writeln!(f)?;
 

@@ -7,7 +7,7 @@ use crate::{
     error::Result,
     expression::logical::expr::Expression,
     plan::{
-        logical::{plan::LogicalPlan, projection::Projection},
+        logical::{filter::Filter, plan::LogicalPlan, projection::Projection},
         planner::Planner,
     },
 };
@@ -45,6 +45,13 @@ impl DataFrame {
         let plan = LogicalPlan::Projection(Projection::new(Arc::new(input), columns));
 
         Self { plan }
+    }
+
+    pub fn filter(self, predicate: Expression) -> Result<Self> {
+        let input = self.plan;
+        let plan = LogicalPlan::Filter(Filter::try_new(Arc::new(input), predicate)?);
+
+        Ok(Self { plan })
     }
 }
 

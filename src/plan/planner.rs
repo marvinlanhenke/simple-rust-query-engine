@@ -45,6 +45,7 @@ impl Planner {
 
                 Ok(Arc::new(ProjectionExec::new(input, schema, expression)))
             }
+            Filter(_plan) => todo!(),
         }
     }
 

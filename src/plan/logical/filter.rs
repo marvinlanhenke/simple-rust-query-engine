@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, sync::Arc};
 
 use arrow::datatypes::{DataType, SchemaRef};
 use snafu::location;
@@ -14,14 +14,14 @@ use super::plan::LogicalPlan;
 #[derive(Debug)]
 pub struct Filter {
     /// The input [`LogicalPlan`].
-    input: Box<LogicalPlan>,
+    input: Arc<LogicalPlan>,
     /// The filter predicate to apply.
     predicate: Expression,
 }
 
 impl Filter {
     /// Attempts to create a new [`Filter`] instance.
-    pub fn try_new(input: Box<LogicalPlan>, predicate: Expression) -> Result<Self> {
+    pub fn try_new(input: Arc<LogicalPlan>, predicate: Expression) -> Result<Self> {
         if predicate.data_type(&input.schema())? != DataType::Boolean {
             return Err(Error::InvalidData {
                 message: format!(
@@ -41,8 +41,8 @@ impl Filter {
     }
 
     /// Retrieves the filter predicate applied to [`Filter`].
-    pub fn predicate(&self) -> &Expression {
-        &self.predicate
+    pub fn expressions(&self) -> &[Expression] {
+        std::slice::from_ref(&self.predicate)
     }
 
     /// A reference-counted [`arrow::datatypes::Schema`] of the input plan.
