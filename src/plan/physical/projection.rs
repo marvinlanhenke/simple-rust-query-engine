@@ -6,21 +6,29 @@ use std::{
     task::{Context, Poll},
 };
 
-use arrow::{array::RecordBatch, datatypes::SchemaRef};
+use arrow::{
+    array::{RecordBatch, RecordBatchOptions},
+    datatypes::SchemaRef,
+};
 use futures::{Stream, StreamExt};
 
 use crate::{error::Result, expression::physical::expr::PhysicalExpression, io::RecordBatchStream};
 
 use super::plan::{format_exec, ExecutionPlan};
 
+/// Represents an [`ExecutionPlan`] for a projection operation.
 #[derive(Debug)]
 pub struct ProjectionExec {
+    /// The input [`ExecutionPlan`].
     input: Arc<dyn ExecutionPlan>,
+    /// A reference-counted schema of the projected data.
     schema: SchemaRef,
+    /// A list of [`PhysicalExpression`] to apply for the projection.
     expression: Vec<Arc<dyn PhysicalExpression>>,
 }
 
 impl ProjectionExec {
+    /// Creates a new [`ProjectionExec`] instance.
     pub fn new(
         input: Arc<dyn ExecutionPlan>,
         schema: SchemaRef,
@@ -64,13 +72,18 @@ impl Display for ProjectionExec {
     }
 }
 
+/// Represents a stream of projected [`RecordBatch`] instances.
 struct ProjectionExecStream {
+    /// The input stream of [`RecordBatch`] instances.
     input: RecordBatchStream,
+    /// The schema of the projected data.
     schema: SchemaRef,
+    /// A list of [`PhysicalExpression`] to apply for the projection.
     expression: Vec<Arc<dyn PhysicalExpression>>,
 }
 
 impl ProjectionExecStream {
+    /// Creates a new [`ProjectionExecStream`] instance.
     pub fn new(
         input: RecordBatchStream,
         schema: SchemaRef,
@@ -83,8 +96,27 @@ impl ProjectionExecStream {
         }
     }
 
+    /// Projects the expressions onto the given `RecordBatch`.
     fn project_batch(&self, batch: &RecordBatch) -> Result<RecordBatch> {
-        todo!()
+        let columns = self
+            .expression
+            .iter()
+            .map(|expr| {
+                expr.eval(batch)
+                    .and_then(|res| res.into_array(batch.num_rows()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        if columns.is_empty() {
+            let options = RecordBatchOptions::new().with_row_count(Some(batch.num_rows()));
+            return Ok(RecordBatch::try_new_with_options(
+                self.schema.clone(),
+                columns,
+                &options,
+            )?);
+        }
+
+        Ok(RecordBatch::try_new(self.schema.clone(), columns)?)
     }
 }
 
@@ -96,5 +128,34 @@ impl Stream for ProjectionExecStream {
             Some(Ok(batch)) => Some(self.project_batch(&batch)),
             other => other,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use futures::StreamExt;
+
+    use crate::{
+        expression::physical::column::ColumnExpr,
+        io::reader::csv::options::CsvFileOpenerConfig,
+        plan::physical::{plan::ExecutionPlan, projection::ProjectionExec, scan::csv::CsvExec},
+        tests::create_schema,
+    };
+
+    #[tokio::test]
+    async fn test_projection_steam() {
+        let schema = Arc::new(create_schema());
+        let config = CsvFileOpenerConfig::builder(schema.clone()).build();
+        let input = Arc::new(CsvExec::new("testdata/csv/simple.csv", config));
+        let exec = ProjectionExec::new(input, schema, vec![Arc::new(ColumnExpr::new(0))]);
+
+        let mut stream = exec.execute().unwrap();
+
+        while let Some(Ok(batch)) = stream.next().await {
+            assert_eq!(batch.num_rows(), 6);
+            assert_eq!(batch.num_columns(), 1);
+        }
     }
 }
