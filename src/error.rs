@@ -9,6 +9,11 @@ pub enum Error {
         message: String,
         location: snafu::Location,
     },
+    #[snafu(display("InvalidDataError: {message}, {location}"))]
+    InvalidData {
+        message: String,
+        location: snafu::Location,
+    },
     #[snafu(display("IoError: {message}, {location}"))]
     Io {
         message: String,
