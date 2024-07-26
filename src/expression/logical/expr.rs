@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{error::Result, plan::logical::plan::LogicalPlan};
+use crate::{error::Result, expression::scalar::ScalarValue, plan::logical::plan::LogicalPlan};
 use arrow::datatypes::Field;
 
 use super::column::Column;
@@ -8,7 +8,7 @@ use super::column::Column;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expression {
     Column(Column),
-    ScalarValue,
+    Literal(ScalarValue),
 }
 
 impl Expression {
@@ -28,7 +28,7 @@ impl Display for Expression {
 
         match self {
             Column(e) => write!(f, "{}", e),
-            ScalarValue => write!(f, "TODO!"),
+            Literal(_) => write!(f, "TODO!"),
         }
     }
 }
