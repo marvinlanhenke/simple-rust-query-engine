@@ -4,7 +4,7 @@ use crate::{
     error::{Error, Result},
     plan::logical::plan::LogicalPlan,
 };
-use arrow::datatypes::{Field, SchemaRef};
+use arrow::datatypes::{Field, Schema};
 use snafu::location;
 
 /// Represents a [`Column`] expression in an AST.
@@ -27,11 +27,11 @@ impl Column {
 
     /// Resolves this column to its [`Field`] definition from a logical plan.
     pub fn to_field_from_plan(&self, plan: &LogicalPlan) -> Result<Field> {
-        self.to_field(plan.schema())
+        self.to_field(&plan.schema())
     }
 
     /// Resolves this column to its [`Field`] definition from a schema.
-    pub fn to_field(&self, schema: SchemaRef) -> Result<Field> {
+    pub fn to_field(&self, schema: &Schema) -> Result<Field> {
         let (_, field) = schema
             .column_with_name(&self.name)
             .ok_or_else(|| Error::InvalidData {

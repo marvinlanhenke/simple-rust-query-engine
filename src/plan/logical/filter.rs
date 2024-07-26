@@ -1,8 +1,12 @@
 use std::fmt::Display;
 
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{DataType, SchemaRef};
+use snafu::location;
 
-use crate::{error::Result, expression::logical::expr::Expression};
+use crate::{
+    error::{Error, Result},
+    expression::logical::expr::Expression,
+};
 
 use super::plan::LogicalPlan;
 
@@ -18,7 +22,16 @@ pub struct Filter {
 impl Filter {
     /// Attempts to create a new [`Filter`] instance.
     pub fn try_new(input: Box<LogicalPlan>, predicate: Expression) -> Result<Self> {
-        // check if predicate evals to boolean
+        if predicate.data_type(&input.schema())? != DataType::Boolean {
+            return Err(Error::InvalidData {
+                message: format!(
+                    "Cannot create filter with non-boolean predicate '{}'",
+                    predicate
+                ),
+                location: location!(),
+            });
+        };
+
         Ok(Self { input, predicate })
     }
 
