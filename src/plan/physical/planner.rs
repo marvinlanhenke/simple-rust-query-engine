@@ -48,6 +48,7 @@ impl Planner {
         }
     }
 
+    /// Converts a logical to a physical expression.
     fn create_physical_expression(
         input: &LogicalPlan,
         expr: &Expression,

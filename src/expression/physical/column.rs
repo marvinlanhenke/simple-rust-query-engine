@@ -50,6 +50,9 @@ impl PhysicalExpression for ColumnExpr {
         Ok(schema.field(self.index).data_type().clone())
     }
 
+    /// Evaluates the column index against the input `RecordBatch`.
+    /// Return a [`ColumnarValue`] wrapping the underlying arrow array,
+    /// representing the projected column with its data.
     fn eval(&self, input: &RecordBatch) -> Result<ColumnarValue> {
         let array = Arc::new(input.column(self.index).clone());
 
@@ -60,5 +63,45 @@ impl PhysicalExpression for ColumnExpr {
 impl Display for ColumnExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "#{}", self.index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use arrow::datatypes::DataType;
+
+    use crate::{
+        expression::{physical::expr::PhysicalExpression, scalar::ColumnarValue},
+        tests::{create_record_batch, create_schema},
+    };
+
+    use super::ColumnExpr;
+
+    #[test]
+    fn test_column_expr_eval() {
+        let batch = create_record_batch();
+        let expr = ColumnExpr::new(0);
+
+        let result = expr.eval(&batch).unwrap();
+
+        match result {
+            ColumnarValue::Array(v) => assert!(!v.is_empty()),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_column_expr_data_type() {
+        let schema = create_schema();
+        let expr = ColumnExpr::new(0);
+
+        let result = expr.data_type(&schema).unwrap();
+        let expected = DataType::Utf8;
+        assert_eq!(result, expected);
+
+        let expr = ColumnExpr::new(4);
+        let try_res = expr.data_type(&schema);
+        assert!(try_res.is_err());
     }
 }

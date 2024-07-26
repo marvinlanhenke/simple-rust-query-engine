@@ -25,6 +25,7 @@ pub trait ExecutionPlan: Display + Debug + Send + Sync {
     fn format(&self) -> String;
 }
 
+/// A helper method to print an [`ExecutionPlan`].
 pub fn format_exec(
     input: &dyn ExecutionPlan,
     f: &mut std::fmt::Formatter<'_>,

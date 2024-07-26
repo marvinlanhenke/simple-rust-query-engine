@@ -5,13 +5,17 @@ use arrow::datatypes::Field;
 
 use super::column::Column;
 
+/// Represents a logical [`Expression`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expression {
+    /// A [`Column`] expression in an AST.
     Column(Column),
+    /// A [`ScalarValue`] expression in an AST.
     Literal(ScalarValue),
 }
 
 impl Expression {
+    /// Resolves this column to its [`Field`] definition from a logical plan.
     pub fn to_field(&self, plan: &LogicalPlan) -> Result<Field> {
         use Expression::*;
 

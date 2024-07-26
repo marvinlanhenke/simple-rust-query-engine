@@ -1,13 +1,18 @@
 use crate::error::Result;
 use arrow::array::ArrayRef;
 
+/// Representing the return value of a physical expression.
+/// Which is either an arrow `Array` or a `Scalar` value.
 #[derive(Debug)]
 pub enum ColumnarValue {
+    /// An arrow array.
     Array(ArrayRef),
+    /// A `ScalarValue`.
     Scalar(ScalarValue),
 }
 
 impl ColumnarValue {
+    /// Convert the variant into an [`arrow::array::ArrayRef`].
     pub fn into_array(self, num_rows: usize) -> Result<ArrayRef> {
         use ColumnarValue::*;
 
@@ -18,6 +23,7 @@ impl ColumnarValue {
     }
 }
 
+/// An enum representing the different types of `ScalarValue`'s.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ScalarValue {
     Null,
