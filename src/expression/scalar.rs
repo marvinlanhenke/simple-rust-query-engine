@@ -18,7 +18,7 @@ impl ColumnarValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ScalarValue {
     Null,
     Boolean(Option<bool>),
@@ -30,8 +30,6 @@ pub enum ScalarValue {
     UInt16(Option<u16>),
     UInt32(Option<u32>),
     UInt64(Option<u64>),
-    Float32(Option<f32>),
-    Float64(Option<f64>),
     Utf8(Option<String>),
 }
 
