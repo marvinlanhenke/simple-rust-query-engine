@@ -56,15 +56,10 @@ impl ExecutionPlan for CsvExec {
         opener.open(&self.path)
     }
 
-    fn format(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn format(&self) -> String {
         match self.config.projection() {
-            None => write!(
-                f,
-                "CsvExec: schema={}, projection=None",
-                self.config.schema()
-            ),
-            Some(projection) => write!(
-                f,
+            None => format!("CsvExec: schema={}, projection=None", self.config.schema()),
+            Some(projection) => format!(
                 "CsvExec: schema={}, projection=[{:?}]",
                 self.config.schema(),
                 projection

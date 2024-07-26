@@ -1,8 +1,4 @@
-use std::{
-    any::Any,
-    fmt::{write, Display},
-    sync::Arc,
-};
+use std::{any::Any, fmt::Display, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
 
@@ -50,8 +46,8 @@ impl ExecutionPlan for ProjectionExec {
         todo!()
     }
 
-    fn format(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ProjectionExec: {:?}", self.expression)
+    fn format(&self) -> String {
+        format!("ProjectionExec: {:?}", self.expression)
     }
 }
 

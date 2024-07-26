@@ -8,7 +8,7 @@ use arrow::datatypes::SchemaRef;
 use crate::{error::Result, io::RecordBatchStream};
 
 /// A trait to represent an [`ExecutionPlan`] for query execution.
-pub trait ExecutionPlan: Display + Debug {
+pub trait ExecutionPlan: Display + Debug + Send + Sync {
     /// Returns a reference to self as a `dyn Any`.
     fn as_any(&self) -> &dyn Any;
 
@@ -22,7 +22,7 @@ pub trait ExecutionPlan: Display + Debug {
     fn execute(&self) -> Result<RecordBatchStream>;
 
     /// Format the [`ExecutionPlan`] to string.
-    fn format(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+    fn format(&self) -> String;
 }
 
 pub fn format_exec(
