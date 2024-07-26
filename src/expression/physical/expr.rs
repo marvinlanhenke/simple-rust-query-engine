@@ -10,7 +10,7 @@ use arrow::{
 
 use crate::error::Result;
 
-pub trait PhysicalExpression: Display + Debug {
+pub trait PhysicalExpression: Display + Debug + Send + Sync {
     fn as_any(&self) -> &dyn Any;
 
     fn data_type(&self, schema: &Schema) -> Result<DataType>;
