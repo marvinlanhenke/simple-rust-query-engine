@@ -55,7 +55,10 @@ impl ExecutionPlan for FilterExec {
     }
 
     fn execute(&self) -> Result<RecordBatchStream> {
-        todo!()
+        let input = self.input.execute()?;
+        let stream = FilterExecStream::new(input, self.predicate.clone());
+
+        Ok(stream.boxed())
     }
 
     fn format(&self) -> String {

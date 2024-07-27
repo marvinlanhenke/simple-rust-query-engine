@@ -58,9 +58,29 @@ impl DataFrame {
 #[cfg(test)]
 mod tests {
     use crate::{
-        execution::context::SessionContext, expression::logical::expr_fn::col,
+        execution::context::SessionContext,
+        expression::{
+            logical::expr_fn::{binary_expr, col, lit},
+            operator::Operator,
+        },
         io::reader::csv::options::CsvReadOptions,
     };
+
+    #[tokio::test]
+    async fn test_dataframe_filter_csv() {
+        let ctx = SessionContext::new();
+        let df = ctx
+            .read_csv("testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap()
+            .select(vec![col("c1"), col("c3")])
+            .filter(binary_expr(col("c1"), Operator::Eq, lit("a")))
+            .unwrap();
+
+        let result = df.collect().await.unwrap();
+
+        assert_eq!(result[0].num_rows(), 1);
+        assert_eq!(result[0].num_columns(), 2);
+    }
 
     #[tokio::test]
     async fn test_dataframe_select_csv() {
