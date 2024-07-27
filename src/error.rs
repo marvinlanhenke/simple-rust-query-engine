@@ -14,6 +14,11 @@ pub enum Error {
         message: String,
         location: snafu::Location,
     },
+    #[snafu(display("InvalidOperationError: {message}, {location}"))]
+    InvalidOperation {
+        message: String,
+        location: snafu::Location,
+    },
     #[snafu(display("IoError: {message}, {location}"))]
     Io {
         message: String,
