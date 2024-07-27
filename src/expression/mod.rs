@@ -1,3 +1,4 @@
+pub mod coercion;
 pub mod logical;
 pub mod operator;
 pub mod physical;

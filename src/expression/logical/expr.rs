@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::{
     error::{Error, Result},
-    expression::values::ScalarValue,
+    expression::{coercion::Signature, values::ScalarValue},
     plan::logical::plan::LogicalPlan,
 };
 use arrow::datatypes::{DataType, Field, Schema};
@@ -45,7 +45,11 @@ impl Expression {
         match self {
             Column(e) => Ok(e.to_field(schema)?.data_type().clone()),
             Literal(e) => Ok(e.data_type()),
-            _ => todo!(),
+            Binary(e) => {
+                let lhs = e.lhs().data_type(schema)?;
+                let rhs = e.rhs().data_type(schema)?;
+                Signature::get_result_type(&lhs, e.op(), &rhs)
+            }
         }
     }
 }
