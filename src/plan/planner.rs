@@ -7,9 +7,14 @@ use crate::{
     error::{Error, Result},
     expression::{
         logical::expr::Expression,
-        physical::{column::ColumnExpr, expr::PhysicalExpression},
+        physical::{
+            binary::BinaryExpr, column::ColumnExpr, expr::PhysicalExpression, literal::LiteralExpr,
+        },
     },
-    plan::{logical::plan::LogicalPlan, physical::projection::ProjectionExec},
+    plan::{
+        logical::plan::LogicalPlan,
+        physical::{filter::FilterExec, projection::ProjectionExec},
+    },
 };
 
 use super::physical::plan::ExecutionPlan;
@@ -45,7 +50,12 @@ impl Planner {
 
                 Ok(Arc::new(ProjectionExec::new(input, schema, expression)))
             }
-            Filter(_plan) => todo!(),
+            Filter(plan) => {
+                let physical_input = Self::create_physical_plan(plan.input())?;
+                let predicate = Self::create_physical_expression(input, &plan.expressions()[0])?;
+
+                Ok(Arc::new(FilterExec::try_new(physical_input, predicate)?))
+            }
         }
     }
 
@@ -57,19 +67,24 @@ impl Planner {
         use Expression::*;
 
         match expr {
-            Column(e) => {
-                let (index, _) = input.schema().column_with_name(e.name()).ok_or_else(|| {
+            Column(v) => {
+                let (index, _) = input.schema().column_with_name(v.name()).ok_or_else(|| {
                     Error::InvalidData {
                         message: format!(
                             "Column with name '{}' could not be found in schema",
-                            e.name()
+                            v.name()
                         ),
                         location: location!(),
                     }
                 })?;
                 Ok(Arc::new(ColumnExpr::new(index)))
             }
-            _ => todo!(),
+            Literal(v) => Ok(Arc::new(LiteralExpr::new(v.clone()))),
+            Binary(v) => {
+                let left = Self::create_physical_expression(input, v.lhs())?;
+                let right = Self::create_physical_expression(input, v.rhs())?;
+                Ok(Arc::new(BinaryExpr::new(left, v.op().clone(), right)))
+            }
         }
     }
 }
