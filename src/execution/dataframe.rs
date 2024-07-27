@@ -59,10 +59,7 @@ impl DataFrame {
 mod tests {
     use crate::{
         execution::context::SessionContext,
-        expression::{
-            logical::expr_fn::{binary_expr, col, lit},
-            operator::Operator,
-        },
+        expression::logical::expr_fn::{col, lit},
         io::reader::csv::options::CsvReadOptions,
     };
 
@@ -73,12 +70,12 @@ mod tests {
             .read_csv("testdata/csv/simple.csv", CsvReadOptions::new())
             .unwrap()
             .select(vec![col("c1"), col("c3")])
-            .filter(binary_expr(col("c1"), Operator::Eq, lit("a")))
+            .filter(col("c1").neq(lit("a")))
             .unwrap();
 
         let result = df.collect().await.unwrap();
 
-        assert_eq!(result[0].num_rows(), 1);
+        assert_eq!(result[0].num_rows(), 5);
         assert_eq!(result[0].num_columns(), 2);
     }
 

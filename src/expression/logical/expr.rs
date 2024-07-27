@@ -2,13 +2,13 @@ use std::fmt::Display;
 
 use crate::{
     error::{Error, Result},
-    expression::{coercion::Signature, values::ScalarValue},
+    expression::{coercion::Signature, operator::Operator, values::ScalarValue},
     plan::logical::plan::LogicalPlan,
 };
 use arrow::datatypes::{DataType, Field, Schema};
 use snafu::location;
 
-use super::{binary::Binary, column::Column};
+use super::{binary::Binary, column::Column, expr_fn::binary_expr};
 
 /// Represents a logical [`Expression`] in an AST.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -65,6 +65,25 @@ impl Display for Expression {
         }
     }
 }
+
+macro_rules! make_expr_fn {
+    ($fn:ident, $op:ident) => {
+        impl Expression {
+            pub fn $fn(self, other: Expression) -> Expression {
+                binary_expr(self, Operator::$op, other)
+            }
+        }
+    };
+}
+
+make_expr_fn!(eq, Eq);
+make_expr_fn!(neq, NotEq);
+make_expr_fn!(lt, Lt);
+make_expr_fn!(lt_eq, LtEq);
+make_expr_fn!(gt, Gt);
+make_expr_fn!(gt_eq, GtEq);
+make_expr_fn!(and, And);
+make_expr_fn!(or, Or);
 
 #[cfg(test)]
 mod tests {}
