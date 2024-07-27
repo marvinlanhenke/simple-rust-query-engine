@@ -1,7 +1,12 @@
 use std::fmt::Display;
 
-use crate::{error::Result, expression::values::ScalarValue, plan::logical::plan::LogicalPlan};
+use crate::{
+    error::{Error, Result},
+    expression::values::ScalarValue,
+    plan::logical::plan::LogicalPlan,
+};
 use arrow::datatypes::{DataType, Field, Schema};
+use snafu::location;
 
 use super::column::Column;
 
@@ -21,16 +26,23 @@ impl Expression {
 
         match self {
             Column(e) => e.to_field_from_plan(plan),
-            _ => todo!(),
+            other => Err(Error::InvalidOperation {
+                message: format!(
+                    "The conversion of expression '{}' to field is not supported",
+                    other
+                ),
+                location: location!(),
+            }),
         }
     }
 
+    /// Returns the [`DataType`] of the expression.
     pub fn data_type(&self, schema: &Schema) -> Result<DataType> {
         use Expression::*;
 
         match self {
             Column(e) => Ok(e.to_field(schema)?.data_type().clone()),
-            _ => todo!(),
+            Literal(e) => Ok(e.data_type()),
         }
     }
 }
@@ -41,7 +53,10 @@ impl Display for Expression {
 
         match self {
             Column(e) => write!(f, "{}", e),
-            Literal(_) => write!(f, "TODO!"),
+            Literal(e) => write!(f, "{}", e),
         }
     }
 }
+
+#[cfg(test)]
+mod tests {}
