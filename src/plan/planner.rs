@@ -69,7 +69,7 @@ impl Planner {
                 })?;
                 Ok(Arc::new(ColumnExpr::new(index)))
             }
-            Literal(_) => todo!(),
+            _ => todo!(),
         }
     }
 }

@@ -8,15 +8,17 @@ use crate::{
 use arrow::datatypes::{DataType, Field, Schema};
 use snafu::location;
 
-use super::column::Column;
+use super::{binary::Binary, column::Column};
 
-/// Represents a logical [`Expression`].
+/// Represents a logical [`Expression`] in an AST.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expression {
-    /// A [`Column`] expression in an AST.
+    /// A [`Column`] expression.
     Column(Column),
-    /// A [`ScalarValue`] expression in an AST.
+    /// A [`ScalarValue`] expression.
     Literal(ScalarValue),
+    /// A [`Binary`] expression.
+    Binary(Binary),
 }
 
 impl Expression {
@@ -43,6 +45,7 @@ impl Expression {
         match self {
             Column(e) => Ok(e.to_field(schema)?.data_type().clone()),
             Literal(e) => Ok(e.data_type()),
+            _ => todo!(),
         }
     }
 }
@@ -54,6 +57,7 @@ impl Display for Expression {
         match self {
             Column(e) => write!(f, "{}", e),
             Literal(e) => write!(f, "{}", e),
+            Binary(e) => write!(f, "{}", e),
         }
     }
 }
