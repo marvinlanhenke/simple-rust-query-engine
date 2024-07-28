@@ -47,6 +47,7 @@ impl DataFrame {
         Self { plan }
     }
 
+    /// Applies a filter predicate on the [`DataFrame`].
     pub fn filter(self, predicate: Expression) -> Result<Self> {
         let input = self.plan;
         let plan = LogicalPlan::Filter(Filter::try_new(Arc::new(input), predicate)?);
