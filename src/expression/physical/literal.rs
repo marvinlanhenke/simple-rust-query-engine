@@ -12,12 +12,14 @@ use crate::{
 
 use super::expr::PhysicalExpression;
 
+/// Represents a literal value in the physical execution plan.
 #[derive(Debug)]
 pub struct LiteralExpr {
     value: ScalarValue,
 }
 
 impl LiteralExpr {
+    /// Creates a new [`LiteralExpr`] instance.
     pub fn new(value: ScalarValue) -> Self {
         Self { value }
     }
@@ -40,5 +42,45 @@ impl PhysicalExpression for LiteralExpr {
 impl Display for LiteralExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::datatypes::DataType;
+
+    use crate::{
+        expression::{
+            physical::expr::PhysicalExpression,
+            values::{ColumnarValue, ScalarValue},
+        },
+        tests::{create_record_batch, create_schema},
+    };
+
+    use super::LiteralExpr;
+
+    #[test]
+    fn test_literal_expr_eval() {
+        let input = create_record_batch();
+        let expr = LiteralExpr::new(ScalarValue::Utf8(Some("a".to_string())));
+
+        let result = expr
+            .eval(&input)
+            .unwrap()
+            .into_array(input.num_rows())
+            .unwrap();
+        let expected = ColumnarValue::Scalar(ScalarValue::Utf8(Some("a".to_string())))
+            .into_array(input.num_rows())
+            .unwrap();
+        assert_eq!(&result, &expected);
+    }
+
+    #[test]
+    fn test_literal_expr_data_type() {
+        let schema = create_schema();
+        let expr = LiteralExpr::new(ScalarValue::Utf8(Some("a".to_string())));
+
+        let result = expr.data_type(&schema).unwrap();
+        assert_eq!(result, DataType::Utf8);
     }
 }
