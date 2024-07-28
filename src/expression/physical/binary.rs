@@ -26,14 +26,19 @@ use crate::{
 
 use super::expr::PhysicalExpression;
 
+/// Represents a binary expression in the physical execution plan.
 #[derive(Debug)]
 pub struct BinaryExpr {
+    /// The reference-counted left [`PhysicalExpression`].
     lhs: Arc<dyn PhysicalExpression>,
+    /// The [`Operator`] for the binary expression.
     op: Operator,
+    /// The reference-counted right [`PhysicalExpression`].
     rhs: Arc<dyn PhysicalExpression>,
 }
 
 impl BinaryExpr {
+    /// Creates a new [`BinaryExpr`] instance.
     pub fn new(
         lhs: Arc<dyn PhysicalExpression>,
         op: Operator,
@@ -42,6 +47,9 @@ impl BinaryExpr {
         Self { lhs, op, rhs }
     }
 
+    /// Applies a comparison operator to two [`ColumnarValue`] instances.
+    ///
+    /// Returns a `Result` containing a `BooleanArray`, or an error if the operation failed.
     fn apply_cmp(
         lhs: &ColumnarValue,
         rhs: &ColumnarValue,
@@ -50,6 +58,12 @@ impl BinaryExpr {
         Self::apply(lhs, rhs, |l, r| Ok(Arc::new(f(l, r)?)))
     }
 
+    /// Applies an arbitrary function to two [`ColumnarValue`] instances.
+    ///
+    /// A utility function that applies a given operation (i.e. [`arrow::compute::kernels::cmp::eq`])
+    /// to two [`ColumnarValue`] instances, which can either be arrays or scalars.
+    /// The function provided (`f`) is expected to take two [`Datum`] references and
+    /// return an [`ArrayRef`] wrapped in a `Result`.
     fn apply(
         lhs: &ColumnarValue,
         rhs: &ColumnarValue,
@@ -81,6 +95,13 @@ impl PhysicalExpression for BinaryExpr {
         Signature::get_result_type(&lhs, &self.op, &rhs)
     }
 
+    /// Evaluates the binary expression against a given [`RecordBatch`].
+    ///
+    /// It evaluates the left-hand side (`lhs`) and right-hand side (`rhs`)
+    /// expressions against the provided `RecordBatch` and then applies the binary
+    /// operator (`op`) to the resulting `ColumnarValue` instances. Depending on the
+    /// operator, different comparison or arithmetic functions are used (i.e.
+    /// [`arrow::compute::kernels::cmp::eq`] for [`Operator::Eq`]).
     fn eval(&self, input: &RecordBatch) -> Result<ColumnarValue> {
         use Operator::*;
 
@@ -158,5 +179,52 @@ impl Display for BinaryExpr {
         write_child(f, self.lhs.as_ref())?;
         write!(f, " {} ", self.op)?;
         write_child(f, self.rhs.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use arrow::datatypes::DataType;
+
+    use crate::{
+        expression::{
+            operator::Operator,
+            physical::{column::ColumnExpr, expr::PhysicalExpression, literal::LiteralExpr},
+            values::ScalarValue,
+        },
+        tests::{create_record_batch, create_schema},
+    };
+
+    use super::BinaryExpr;
+
+    fn create_binary_expr() -> BinaryExpr {
+        let lhs = Arc::new(ColumnExpr::new(0));
+        let rhs = Arc::new(LiteralExpr::new(ScalarValue::Utf8(Some(
+            "hello".to_string(),
+        ))));
+        BinaryExpr::new(lhs, Operator::Eq, rhs)
+    }
+
+    #[test]
+    fn test_binary_expr_eval() {
+        let input = create_record_batch();
+        let expr = create_binary_expr();
+
+        let result = expr.eval(&input).unwrap();
+        let result = result.into_array(input.num_rows()).unwrap();
+        assert_eq!(result.data_type(), &DataType::Boolean);
+        assert_eq!(result.len(), 2);
+        assert_eq!(*result.to_data().buffers()[0], [1, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_binary_expr_data_type() {
+        let schema = create_schema();
+        let expr = create_binary_expr();
+
+        let result = expr.data_type(&schema).unwrap();
+        assert_eq!(result, DataType::Boolean);
     }
 }
