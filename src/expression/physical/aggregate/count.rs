@@ -1,0 +1,100 @@
+use std::{any::Any, sync::Arc};
+
+use arrow::{
+    array::{ArrayRef, Int64Array},
+    compute,
+    datatypes::{DataType, Field},
+};
+use snafu::location;
+
+use crate::{
+    error::{Error, Result},
+    expression::{physical::expr::PhysicalExpression, values::ScalarValue},
+};
+
+use super::{Accumulator, AggregateExpr};
+
+/// Represents a count aggregate expression.
+#[derive(Debug)]
+pub struct CountExpr {
+    /// The input expressions used by the accumulator.
+    expressions: Vec<Arc<dyn PhysicalExpression>>,
+}
+
+impl CountExpr {
+    /// Creates a new [`CountExpr`] instance.
+    pub fn new(expression: Arc<dyn PhysicalExpression>) -> Self {
+        Self {
+            expressions: vec![expression],
+        }
+    }
+}
+
+impl AggregateExpr for CountExpr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn field(&self) -> Result<Field> {
+        Ok(Field::new("COUNT", DataType::Int64, true))
+    }
+
+    fn state_fields(&self) -> Result<Vec<Field>> {
+        Ok(vec![Field::new("COUNT", DataType::Int64, true)])
+    }
+
+    fn expressions(&self) -> Vec<Arc<dyn PhysicalExpression>> {
+        self.expressions.clone()
+    }
+
+    fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
+        Ok(Box::new(CountAccumulator::new()))
+    }
+}
+
+/// Represents the accumulator for the count expression.
+#[derive(Debug, Default)]
+pub struct CountAccumulator {
+    /// The current count of non-null values.
+    count: i64,
+}
+
+impl CountAccumulator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Accumulator for CountAccumulator {
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        Ok(vec![ScalarValue::Int64(Some(self.count))])
+    }
+
+    fn eval(&mut self) -> Result<ScalarValue> {
+        Ok(ScalarValue::Int64(Some(self.count)))
+    }
+
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        let array = &values[0];
+        let null_count = array.logical_nulls().map_or(0, |x| x.null_count());
+        self.count += (array.len() - null_count) as i64;
+        Ok(())
+    }
+
+    fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
+        let counts = states[0]
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .ok_or_else(|| Error::Arrow {
+                message: "Failed to downcast array".to_string(),
+                location: location!(),
+            })?;
+        if let Some(update) = compute::sum(counts) {
+            self.count += update;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {}
