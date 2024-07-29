@@ -32,6 +32,7 @@ impl ColumnarValue {
     }
 }
 
+/// Macro to build an array from an optional scalar value.
 macro_rules! build_array_from_option {
     ($data_type:ident, $array_type:ident, $expr:expr, $size:expr) => {
         match $expr {
@@ -41,6 +42,7 @@ macro_rules! build_array_from_option {
     };
 }
 
+/// Macro to cast an array element to a specific scalar type.
 macro_rules! typed_cast {
     ($arr:expr, $idx:expr, $ty:ident, $scalar:ident) => {{
         let array =
@@ -75,6 +77,7 @@ pub enum ScalarValue {
 }
 
 impl ScalarValue {
+    /// Attempts to create a [`ScalarValue`] from an array element.
     pub fn try_from_array(array: &dyn Array, index: usize) -> Result<Self> {
         if !array.is_valid(index) {
             return array.data_type().try_into();
@@ -104,6 +107,7 @@ impl ScalarValue {
         })
     }
 
+    /// Retrieves the data type of the [`ScalarValue`].
     pub fn data_type(&self) -> DataType {
         match self {
             ScalarValue::Null => DataType::Null,
@@ -120,10 +124,12 @@ impl ScalarValue {
         }
     }
 
+    /// Converts the [`ScalarValue`] into a `Scalar<ArrayRef>`.
     pub fn to_scalar(&self) -> Result<Scalar<ArrayRef>> {
         Ok(Scalar::new(self.to_array(1)))
     }
 
+    /// Converts the [`ScalarValue`] into an `ArrayRef` with the specified number of rows.
     pub fn to_array(&self, num_rows: usize) -> ArrayRef {
         match self {
             ScalarValue::Null => make_array(ArrayData::new_null(&DataType::Null, num_rows)),
@@ -149,6 +155,7 @@ impl ScalarValue {
 impl TryFrom<DataType> for ScalarValue {
     type Error = Error;
 
+    /// Tries to create a `ScalarValue` from a `DataType`.
     fn try_from(data_type: DataType) -> Result<Self> {
         (&data_type).try_into()
     }
@@ -157,6 +164,7 @@ impl TryFrom<DataType> for ScalarValue {
 impl TryFrom<&DataType> for ScalarValue {
     type Error = Error;
 
+    /// Tries to create a `ScalarValue` from a reference to a `DataType`.
     fn try_from(data_type: &DataType) -> Result<Self> {
         Ok(match data_type {
             DataType::Null => ScalarValue::Null,
@@ -211,4 +219,26 @@ impl Display for ScalarValue {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use std::sync::Arc;
+
+    use arrow::{
+        array::{ArrayRef, Int32Array},
+        datatypes::DataType,
+    };
+
+    use super::ScalarValue;
+
+    #[test]
+    fn test_scalar_value() {
+        let arr: ArrayRef = Arc::new(Int32Array::from(vec![1, 2]));
+        let scalar_value = ScalarValue::try_from_array(&arr, 0).unwrap();
+        let scalar = scalar_value.to_scalar().unwrap();
+        let scalar_arr = scalar_value.to_array(2);
+
+        assert_eq!(scalar_value.data_type(), DataType::Int32);
+        assert_eq!(scalar.into_inner().data_type(), &DataType::Int32);
+        assert_eq!(scalar_arr.len(), 2);
+        assert_eq!(scalar_arr.data_type(), &DataType::Int32);
+    }
+}
