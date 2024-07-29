@@ -145,7 +145,7 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn test_projection_steam() {
+    async fn test_projection_stream() {
         let schema = Arc::new(create_schema());
         let config = CsvFileOpenerConfig::builder(schema.clone()).build();
         let input = Arc::new(CsvExec::new("testdata/csv/simple.csv", config));
