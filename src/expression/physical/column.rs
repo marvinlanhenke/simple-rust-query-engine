@@ -50,6 +50,10 @@ impl PhysicalExpression for ColumnExpr {
         Ok(schema.field(self.index).data_type().clone())
     }
 
+    fn nullable(&self, schema: &Schema) -> Result<bool> {
+        Ok(schema.field(self.index).is_nullable())
+    }
+
     /// Evaluates the column index against the input `RecordBatch`.
     /// Return a [`ColumnarValue`] wrapping the underlying arrow array,
     /// representing the projected column with its data.

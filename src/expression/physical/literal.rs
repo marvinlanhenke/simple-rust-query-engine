@@ -34,6 +34,10 @@ impl PhysicalExpression for LiteralExpr {
         Ok(self.value.data_type())
     }
 
+    fn nullable(&self, _schema: &Schema) -> Result<bool> {
+        Ok(self.value.is_null())
+    }
+
     fn eval(&self, _input: &RecordBatch) -> Result<ColumnarValue> {
         Ok(ColumnarValue::Scalar(self.value.clone()))
     }

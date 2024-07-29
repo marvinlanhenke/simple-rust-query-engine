@@ -124,6 +124,23 @@ impl ScalarValue {
         }
     }
 
+    /// Whether this value is null or not
+    pub fn is_null(&self) -> bool {
+        match self {
+            ScalarValue::Null => true,
+            ScalarValue::Boolean(v) => v.is_none(),
+            ScalarValue::Int8(v) => v.is_none(),
+            ScalarValue::Int16(v) => v.is_none(),
+            ScalarValue::Int32(v) => v.is_none(),
+            ScalarValue::Int64(v) => v.is_none(),
+            ScalarValue::UInt8(v) => v.is_none(),
+            ScalarValue::UInt16(v) => v.is_none(),
+            ScalarValue::UInt32(v) => v.is_none(),
+            ScalarValue::UInt64(v) => v.is_none(),
+            ScalarValue::Utf8(v) => v.is_none(),
+        }
+    }
+
     /// Converts the [`ScalarValue`] into a `Scalar<ArrayRef>`.
     pub fn to_scalar(&self) -> Result<Scalar<ArrayRef>> {
         Ok(Scalar::new(self.to_array(1)))

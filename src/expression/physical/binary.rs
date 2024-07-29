@@ -95,6 +95,10 @@ impl PhysicalExpression for BinaryExpr {
         Signature::get_result_type(&lhs, &self.op, &rhs)
     }
 
+    fn nullable(&self, schema: &Schema) -> Result<bool> {
+        Ok(self.lhs.nullable(schema)? || self.rhs.nullable(schema)?)
+    }
+
     /// Evaluates the binary expression against a given [`RecordBatch`].
     ///
     /// It evaluates the left-hand side (`lhs`) and right-hand side (`rhs`)

@@ -18,6 +18,9 @@ pub trait PhysicalExpression: Display + Debug + Send + Sync {
     /// Returns the [`DataType`] of the expression evaluated agains the schema.
     fn data_type(&self, schema: &Schema) -> Result<DataType>;
 
+    /// If this expression is nullable, given the input schema.
+    fn nullable(&self, schema: &Schema) -> Result<bool>;
+
     /// Evaluates the expression against the input [`RecordBatch`].
     fn eval(&self, input: &RecordBatch) -> Result<ColumnarValue>;
 }
