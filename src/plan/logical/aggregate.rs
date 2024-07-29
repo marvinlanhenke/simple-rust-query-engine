@@ -14,7 +14,7 @@ pub struct Aggregate {
     /// A reference-counted [`arrow::datatypes::Schema`].
     schema: SchemaRef,
     /// The expressions used for grouping the data.
-    group_expressions: Vec<Expression>,
+    group_by: Vec<Expression>,
     /// The expressions used for aggregation.
     aggregate_expressions: Vec<Expression>,
 }
@@ -23,10 +23,10 @@ impl Aggregate {
     /// Creates a new [`Aggregate`] instance.
     pub fn try_new(
         input: Arc<LogicalPlan>,
-        group_expressions: Vec<Expression>,
+        group_by: Vec<Expression>,
         aggregate_expressions: Vec<Expression>,
     ) -> Result<Self> {
-        let fields = group_expressions
+        let fields = group_by
             .iter()
             .chain(aggregate_expressions.iter())
             .map(|expr| expr.to_field(&input))
@@ -36,7 +36,7 @@ impl Aggregate {
         Ok(Self {
             input,
             schema,
-            group_expressions,
+            group_by,
             aggregate_expressions,
         })
     }
@@ -57,8 +57,8 @@ impl Aggregate {
     }
 
     /// Returns a slice of expressions used for grouping the data.
-    pub fn group_expressions(&self) -> &[Expression] {
-        self.group_expressions.as_slice()
+    pub fn group_by(&self) -> &[Expression] {
+        self.group_by.as_slice()
     }
 
     /// Returns a slice of expressions used for aggregation.
@@ -69,8 +69,8 @@ impl Aggregate {
 
 impl Display for Aggregate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let group_expr_str = self
-            .group_expressions
+        let group_by_str = self
+            .group_by
             .iter()
             .map(|e| e.to_string())
             .collect::<Vec<_>>()
@@ -84,8 +84,8 @@ impl Display for Aggregate {
 
         write!(
             f,
-            "Aggregate: groupExpr:[{}]; aggrExpr:[{}]",
-            group_expr_str, aggr_expr_str
+            "Aggregate: groupBy:[{}]; aggrExprs:[{}]",
+            group_by_str, aggr_expr_str
         )
     }
 }
