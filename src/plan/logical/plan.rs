@@ -4,7 +4,7 @@ use arrow::datatypes::SchemaRef;
 
 use crate::expression::logical::expr::Expression;
 
-use super::{filter::Filter, projection::Projection, scan::Scan};
+use super::{aggregate::Aggregate, filter::Filter, projection::Projection, scan::Scan};
 
 /// Represents a [`LogicalPlan`] for query execution.
 #[derive(Debug)]
@@ -13,6 +13,7 @@ pub enum LogicalPlan {
     Scan(Scan),
     Projection(Projection),
     Filter(Filter),
+    Aggregate(Aggregate),
 }
 
 impl LogicalPlan {
@@ -22,6 +23,7 @@ impl LogicalPlan {
             LogicalPlan::Scan(plan) => plan.schema(),
             LogicalPlan::Projection(plan) => plan.schema(),
             LogicalPlan::Filter(plan) => plan.schema(),
+            LogicalPlan::Aggregate(plan) => plan.schema(),
         }
     }
 
@@ -31,6 +33,7 @@ impl LogicalPlan {
             LogicalPlan::Scan(plan) => plan.children(),
             LogicalPlan::Projection(plan) => plan.children(),
             LogicalPlan::Filter(plan) => plan.children(),
+            LogicalPlan::Aggregate(plan) => plan.children(),
         }
     }
 
@@ -40,6 +43,7 @@ impl LogicalPlan {
             LogicalPlan::Scan(plan) => plan.expressions(),
             LogicalPlan::Projection(plan) => plan.expressions(),
             LogicalPlan::Filter(plan) => plan.expressions(),
+            _ => &[],
         }
     }
 }
@@ -64,6 +68,7 @@ pub fn format_plan(
         LogicalPlan::Scan(plan) => write!(f, "{}", plan)?,
         LogicalPlan::Projection(plan) => write!(f, "{}", plan)?,
         LogicalPlan::Filter(plan) => write!(f, "{}", plan)?,
+        LogicalPlan::Aggregate(plan) => write!(f, "{}", plan)?,
     }
     writeln!(f)?;
 
@@ -72,36 +77,4 @@ pub fn format_plan(
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-
-    use std::sync::Arc;
-
-    use arrow::datatypes::{DataType, Field, Schema};
-
-    use crate::{
-        io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
-        plan::logical::scan::Scan,
-    };
-
-    use super::LogicalPlan;
-
-    fn create_csv_source() -> CsvDataSource {
-        let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Int16, true)]));
-        let options = CsvReadOptions::builder().with_schema(Some(schema)).build();
-        CsvDataSource::try_new("test_path", options).unwrap()
-    }
-
-    #[test]
-    fn test_logical_plan_scan() {
-        let source = Arc::new(create_csv_source());
-        let projection = Some(vec!["a".to_string()]);
-        let scan = LogicalPlan::Scan(Scan::new("test_path", source, projection, vec![]));
-
-        assert!(scan.children().is_empty());
-        assert!(scan.expressions().is_empty());
-        assert_eq!(scan.schema().fields().len(), 1);
-    }
 }

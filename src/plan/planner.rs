@@ -56,6 +56,7 @@ impl Planner {
 
                 Ok(Arc::new(FilterExec::try_new(physical_input, predicate)?))
             }
+            Aggregate(_plan) => todo!(),
         }
     }
 
