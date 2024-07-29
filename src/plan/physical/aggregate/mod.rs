@@ -1,7 +1,9 @@
 use std::{any::Any, fmt::Display, sync::Arc};
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
-use futures::Stream;
+use futures::StreamExt;
+use hash::GroupedHashAggregateStream;
+use no_groups::AggregateStream;
 
 use crate::{
     error::Result,
@@ -10,6 +12,25 @@ use crate::{
 };
 
 use super::plan::{format_exec, ExecutionPlan};
+
+pub mod hash;
+pub mod no_groups;
+
+enum StreamType {
+    AggregateStream(AggregateStream),
+    GroupedHash(GroupedHashAggregateStream),
+}
+
+impl From<StreamType> for RecordBatchStream {
+    fn from(value: StreamType) -> Self {
+        use StreamType::*;
+
+        match value {
+            AggregateStream(stream) => stream.boxed(),
+            GroupedHash(stream) => stream.boxed(),
+        }
+    }
+}
 
 /// Represents an aggregate physical plan.
 #[derive(Debug)]
@@ -80,13 +101,15 @@ impl ExecutionPlan for AggregateExec {
     }
 
     fn execute(&self) -> Result<RecordBatchStream> {
+        let input = self.input.execute()?;
+
         let stream = if self.group_by.is_empty() {
-            // create and return AggregateStream
-            todo!()
+            StreamType::AggregateStream(AggregateStream::new(input, self.schema()))
         } else {
-            // create an return GroupedHashAggregateStream
-            todo!()
+            StreamType::GroupedHash(GroupedHashAggregateStream {})
         };
+
+        Ok(stream.into())
     }
 
     fn format(&self) -> String {
