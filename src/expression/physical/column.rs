@@ -32,6 +32,11 @@ impl ColumnExpr {
         }
     }
 
+    /// The column name.
+    pub fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+
     /// The column index.
     pub fn index(&self) -> usize {
         self.index
