@@ -78,7 +78,7 @@ impl Planner {
                         location: location!(),
                     }
                 })?;
-                Ok(Arc::new(ColumnExpr::new(index)))
+                Ok(Arc::new(ColumnExpr::new(v.name(), index)))
             }
             Literal(v) => Ok(Arc::new(LiteralExpr::new(v.clone()))),
             Binary(v) => {

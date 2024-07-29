@@ -204,7 +204,7 @@ mod tests {
     use super::BinaryExpr;
 
     fn create_binary_expr() -> BinaryExpr {
-        let lhs = Arc::new(ColumnExpr::new(0));
+        let lhs = Arc::new(ColumnExpr::new("a", 0));
         let rhs = Arc::new(LiteralExpr::new(ScalarValue::Utf8(Some(
             "hello".to_string(),
         ))));

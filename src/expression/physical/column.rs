@@ -14,17 +14,22 @@ use crate::{
 use super::expr::PhysicalExpression;
 
 /// Represents a physical [`Column`]
-/// expression in an [`ExecutionPlan`]
+/// at a given index in a [`RecordBatch`].
 #[derive(Debug)]
 pub struct ColumnExpr {
+    /// The column name.
+    name: String,
     /// The column index.
     index: usize,
 }
 
 impl ColumnExpr {
     /// Creates a new [`ColumnExpr`] instance.
-    pub fn new(index: usize) -> Self {
-        Self { index }
+    pub fn new(name: impl Into<String>, index: usize) -> Self {
+        Self {
+            name: name.into(),
+            index,
+        }
     }
 
     /// The column index.
@@ -85,7 +90,7 @@ mod tests {
     #[test]
     fn test_column_expr_eval() {
         let batch = create_record_batch();
-        let expr = ColumnExpr::new(0);
+        let expr = ColumnExpr::new("a", 0);
 
         let result = expr.eval(&batch).unwrap();
 
@@ -98,13 +103,13 @@ mod tests {
     #[test]
     fn test_column_expr_data_type() {
         let schema = create_schema();
-        let expr = ColumnExpr::new(0);
+        let expr = ColumnExpr::new("a", 0);
 
         let result = expr.data_type(&schema).unwrap();
         let expected = DataType::Utf8;
         assert_eq!(result, expected);
 
-        let expr = ColumnExpr::new(4);
+        let expr = ColumnExpr::new("b", 4);
         let try_res = expr.data_type(&schema);
         assert!(try_res.is_err());
     }
