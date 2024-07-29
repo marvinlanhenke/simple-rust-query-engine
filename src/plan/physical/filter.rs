@@ -16,13 +16,17 @@ use crate::{
 
 use super::plan::{format_exec, ExecutionPlan};
 
+/// Represents a filter execution plan in a query.
 #[derive(Debug)]
 pub struct FilterExec {
+    /// The input [`ExecutionPlan`].
     input: Arc<dyn ExecutionPlan>,
+    /// The predicate expression used to filter rows.
     predicate: Arc<dyn PhysicalExpression>,
 }
 
 impl FilterExec {
+    /// Attempts to create a new [`FilterExec`] instance from specified (boolean) `predicate`.
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
         predicate: Arc<dyn PhysicalExpression>,
@@ -72,16 +76,24 @@ impl Display for FilterExec {
     }
 }
 
+/// Represents a stream of filtered [`RecordBatch`] instances.
 struct FilterExecStream {
+    /// The input stream of `RecordBatch`'es.
     input: RecordBatchStream,
+    /// The predicate expression used to filter rows.
     predicate: Arc<dyn PhysicalExpression>,
 }
 
 impl FilterExecStream {
+    /// Creates a new [`FilterExecStream`] instance.
     fn new(input: RecordBatchStream, predicate: Arc<dyn PhysicalExpression>) -> Self {
         Self { input, predicate }
     }
 
+    /// Filters a [`RecordBatch`] based on the predicate expression.
+    ///
+    /// Evaluates the predicate to produce a `BooleanArray`, which is then used
+    /// to filter and return rows that match the predicate.
     fn filter_batch(&self, batch: &RecordBatch) -> Result<RecordBatch> {
         self.predicate
             .eval(batch)
@@ -110,5 +122,41 @@ impl Stream for FilterExecStream {
             Some(Ok(batch)) => Some(self.filter_batch(&batch)),
             other => other,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use futures::StreamExt;
+
+    use crate::{
+        expression::{
+            operator::Operator,
+            physical::{binary::BinaryExpr, column::ColumnExpr, literal::LiteralExpr},
+            values::ScalarValue,
+        },
+        io::reader::csv::options::CsvFileOpenerConfig,
+        plan::physical::{filter::FilterExec, plan::ExecutionPlan, scan::csv::CsvExec},
+        tests::create_schema,
+    };
+
+    #[tokio::test]
+    async fn test_filter_stream() {
+        let schema = Arc::new(create_schema());
+        let config = CsvFileOpenerConfig::builder(schema.clone()).build();
+        let input = Arc::new(CsvExec::new("testdata/csv/simple.csv", config));
+        let lhs = Arc::new(ColumnExpr::new(0));
+        let rhs = Arc::new(LiteralExpr::new(ScalarValue::Utf8(Some("a".to_string()))));
+        let predicate = Arc::new(BinaryExpr::new(lhs, Operator::Eq, rhs));
+        let exec = FilterExec::try_new(input, predicate).unwrap();
+
+        let mut stream = exec.execute().unwrap();
+
+        while let Some(Ok(batch)) = stream.next().await {
+            assert_eq!(batch.num_rows(), 1);
+            assert_eq!(batch.num_columns(), 3);
+        }
     }
 }
