@@ -149,7 +149,7 @@ mod tests {
         let schema = Arc::new(create_schema());
         let config = CsvFileOpenerConfig::builder(schema.clone()).build();
         let input = Arc::new(CsvExec::new("testdata/csv/simple.csv", config));
-        let exec = ProjectionExec::new(input, schema, vec![Arc::new(ColumnExpr::new(0))]);
+        let exec = ProjectionExec::new(input, schema, vec![Arc::new(ColumnExpr::new("a", 0))]);
 
         let mut stream = exec.execute().unwrap();
 

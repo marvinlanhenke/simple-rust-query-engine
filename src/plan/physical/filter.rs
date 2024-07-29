@@ -147,7 +147,7 @@ mod tests {
         let schema = Arc::new(create_schema());
         let config = CsvFileOpenerConfig::builder(schema.clone()).build();
         let input = Arc::new(CsvExec::new("testdata/csv/simple.csv", config));
-        let lhs = Arc::new(ColumnExpr::new(0));
+        let lhs = Arc::new(ColumnExpr::new("a", 0));
         let rhs = Arc::new(LiteralExpr::new(ScalarValue::Utf8(Some("a".to_string()))));
         let predicate = Arc::new(BinaryExpr::new(lhs, Operator::Eq, rhs));
         let exec = FilterExec::try_new(input, predicate).unwrap();
