@@ -129,3 +129,33 @@ impl Display for AggregateExec {
         format_exec(self, f, 0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use futures::StreamExt;
+
+    use crate::{
+        expression::physical::{aggregate::count::CountExpr, column::ColumnExpr},
+        io::reader::csv::options::CsvFileOpenerConfig,
+        plan::physical::{aggregate::AggregateExec, plan::ExecutionPlan, scan::csv::CsvExec},
+        tests::create_schema,
+    };
+
+    #[tokio::test]
+    async fn test_aggregate_count() {
+        let schema = Arc::new(create_schema());
+        let config = CsvFileOpenerConfig::new(schema.clone());
+        let input = Arc::new(CsvExec::new("testdata/csv/simple.csv", config));
+        let exprs = Arc::new(CountExpr::new(Arc::new(ColumnExpr::new("c2", 0))));
+        let exec = AggregateExec::try_new(input, vec![], vec![exprs]).unwrap();
+
+        let mut stream = exec.execute().unwrap();
+
+        while let Some(Ok(batch)) = stream.next().await {
+            assert_eq!(batch.num_rows(), 1);
+            assert_eq!(batch.num_columns(), 1);
+        }
+    }
+}
