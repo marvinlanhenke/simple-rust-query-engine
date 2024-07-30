@@ -2,7 +2,12 @@ use std::sync::Arc;
 
 use crate::expression::{operator::Operator, values::ScalarValue};
 
-use super::{binary::Binary, column::Column, expr::Expression};
+use super::{
+    aggregate::{Aggregate, AggregateFunction},
+    binary::Binary,
+    column::Column,
+    expr::Expression,
+};
 
 /// Creates an [`Expression::Column`] with provided `name`.
 pub fn col(name: impl Into<String>) -> Expression {
@@ -12,6 +17,12 @@ pub fn col(name: impl Into<String>) -> Expression {
 /// Creates an [`Expression::Binary`] with provided expressions and operator.
 pub fn binary_expr(lhs: Expression, op: Operator, rhs: Expression) -> Expression {
     Expression::Binary(Binary::new(Arc::new(lhs), op, Arc::new(rhs)))
+}
+
+/// Creates an [`Expression::Aggregate`] with an [`AggregateFunction::Count`]
+/// applied to the provided expression.
+pub fn count(expr: Expression) -> Expression {
+    Expression::Aggregate(Aggregate::new(AggregateFunction::Count, Arc::new(expr)))
 }
 
 /// Creates an [`Expression::Literal`].
