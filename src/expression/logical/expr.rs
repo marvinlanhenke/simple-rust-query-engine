@@ -30,6 +30,7 @@ impl Expression {
 
         match self {
             Column(e) => e.to_field_from_plan(plan),
+            Aggregate(e) => e.expression().to_field(plan),
             other => Err(Error::InvalidOperation {
                 message: format!(
                     "The conversion of expression '{}' to field is not supported",
