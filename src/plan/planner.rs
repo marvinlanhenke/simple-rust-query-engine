@@ -6,14 +6,18 @@ use snafu::location;
 use crate::{
     error::{Error, Result},
     expression::{
-        logical::expr::Expression,
+        logical::{aggregate::AggregateFunction, expr::Expression},
         physical::{
-            binary::BinaryExpr, column::ColumnExpr, expr::PhysicalExpression, literal::LiteralExpr,
+            aggregate::{count::CountExpr, AggregateExpr},
+            binary::BinaryExpr,
+            column::ColumnExpr,
+            expr::PhysicalExpression,
+            literal::LiteralExpr,
         },
     },
     plan::{
         logical::plan::LogicalPlan,
-        physical::{filter::FilterExec, projection::ProjectionExec},
+        physical::{aggregate::AggregateExec, filter::FilterExec, projection::ProjectionExec},
     },
 };
 
@@ -56,7 +60,33 @@ impl Planner {
 
                 Ok(Arc::new(FilterExec::try_new(physical_input, predicate)?))
             }
-            Aggregate(_plan) => todo!(),
+            Aggregate(plan) => {
+                let physical_input = Self::create_physical_plan(plan.input())?;
+
+                // not supported yet
+                let group_by = vec![];
+
+                let mut aggregate_expressions: Vec<Arc<dyn AggregateExpr>> =
+                    Vec::with_capacity(plan.aggregate_expressions().len());
+                for expr in plan.aggregate_expressions().iter() {
+                    if let Expression::Aggregate(agg) = expr {
+                        match agg.func() {
+                            AggregateFunction::Count => {
+                                let phys_expr =
+                                    Self::create_physical_expression(input, agg.expression())?;
+                                let aggr_expr = Arc::new(CountExpr::new(phys_expr));
+                                aggregate_expressions.push(aggr_expr);
+                            }
+                        }
+                    };
+                }
+
+                Ok(Arc::new(AggregateExec::try_new(
+                    physical_input,
+                    group_by,
+                    aggregate_expressions,
+                )?))
+            }
         }
     }
 
@@ -86,6 +116,13 @@ impl Planner {
                 let right = Self::create_physical_expression(input, v.rhs())?;
                 Ok(Arc::new(BinaryExpr::new(left, v.op().clone(), right)))
             }
+            other => Err(Error::InvalidOperation {
+                message: format!(
+                    "Conversion from logical to physical expression is not supported for {}",
+                    other
+                ),
+                location: location!(),
+            }),
         }
     }
 }
