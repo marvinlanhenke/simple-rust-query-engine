@@ -4,7 +4,6 @@ use crate::{
     error::Result,
     expression::physical::{
         aggregate::{Accumulator, AggregateExpr},
-        column::ColumnExpr,
         expr::PhysicalExpression,
     },
 };
@@ -55,7 +54,7 @@ impl AggregateStream {
         schema: SchemaRef,
         aggregate_exprs: &[Arc<dyn AggregateExpr>],
     ) -> Result<Self> {
-        let aggregate_expressions = Self::create_aggregate_expressions(aggregate_exprs)?;
+        let aggregate_expressions = Self::create_aggregate_expressions(aggregate_exprs);
         let accumulators = Self::create_accumulators(aggregate_exprs)?;
 
         let inner = AggregateStreamInner {
@@ -103,29 +102,11 @@ impl AggregateStream {
 
     fn create_aggregate_expressions(
         aggregate_exprs: &[Arc<dyn AggregateExpr>],
-    ) -> Result<Vec<Vec<Arc<dyn PhysicalExpression>>>> {
-        let mut base_idx = 0;
+    ) -> Vec<Vec<Arc<dyn PhysicalExpression>>> {
         aggregate_exprs
             .iter()
-            .map(|expr| {
-                let exprs = Self::merge_expressions(base_idx, expr)?;
-                base_idx += exprs.len();
-                Ok(exprs)
-            })
+            .map(|agg| agg.expressions())
             .collect()
-    }
-
-    fn merge_expressions(
-        base_idx: usize,
-        expr: &Arc<dyn AggregateExpr>,
-    ) -> Result<Vec<Arc<dyn PhysicalExpression>>> {
-        expr.state_fields().map(|fields| {
-            fields
-                .iter()
-                .enumerate()
-                .map(|(idx, f)| Arc::new(ColumnExpr::new(f.name(), base_idx + idx)) as _)
-                .collect()
-        })
     }
 }
 
@@ -137,42 +118,5 @@ impl Stream for AggregateStream {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         self.inner.poll_next_unpin(cx)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use arrow::datatypes::{DataType, Field, Schema};
-    use futures::StreamExt;
-
-    use crate::{
-        expression::physical::{aggregate::count::CountExpr, column::ColumnExpr},
-        io::reader::csv::options::CsvFileOpenerConfig,
-        plan::physical::{
-            aggregate::no_groups::AggregateStream, plan::ExecutionPlan, scan::csv::CsvExec,
-        },
-        tests::create_schema,
-    };
-
-    #[tokio::test]
-    async fn test_drive() {
-        let schema = Arc::new(create_schema());
-        let config = CsvFileOpenerConfig::new(schema.clone());
-        let scan = CsvExec::new("testdata/csv/simple.csv", config);
-        let input = scan.execute().unwrap();
-        let expr = Arc::new(CountExpr::new(Arc::new(ColumnExpr::new("c1", 0))));
-
-        let agg_schema = Arc::new(Schema::new(vec![Field::new(
-            "COUNT",
-            DataType::Int64,
-            true,
-        )]));
-        let mut stream = AggregateStream::try_new(input, agg_schema, &[expr]).unwrap();
-
-        while let Some(batch) = stream.next().await {
-            println!("{:?}", batch);
-        }
     }
 }
