@@ -2,8 +2,6 @@ use std::fmt::Display;
 
 use arrow::datatypes::SchemaRef;
 
-use crate::expression::logical::expr::Expression;
-
 use super::{aggregate::Aggregate, filter::Filter, projection::Projection, scan::Scan};
 
 /// Represents a [`LogicalPlan`] for query execution.
@@ -34,16 +32,6 @@ impl LogicalPlan {
             LogicalPlan::Projection(plan) => plan.children(),
             LogicalPlan::Filter(plan) => plan.children(),
             LogicalPlan::Aggregate(plan) => plan.children(),
-        }
-    }
-
-    /// Retrieves the expressions associated with the logical plan.
-    pub fn expressions(&self) -> &[Expression] {
-        match self {
-            LogicalPlan::Scan(plan) => plan.expressions(),
-            LogicalPlan::Projection(plan) => plan.expressions(),
-            LogicalPlan::Filter(plan) => plan.expressions(),
-            _ => &[],
         }
     }
 }
