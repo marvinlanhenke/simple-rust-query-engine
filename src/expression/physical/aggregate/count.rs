@@ -1,14 +1,12 @@
 use std::{any::Any, sync::Arc};
 
 use arrow::{
-    array::{ArrayRef, Int64Array},
-    compute,
+    array::ArrayRef,
     datatypes::{DataType, Field},
 };
-use snafu::location;
 
 use crate::{
-    error::{Error, Result},
+    error::Result,
     expression::{physical::expr::PhysicalExpression, values::ScalarValue},
 };
 
