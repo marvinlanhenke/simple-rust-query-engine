@@ -45,6 +45,16 @@ impl Aggregate {
         Self { func, expression }
     }
 
+    /// The aggregate function to be applied.
+    pub fn func(&self) -> &AggregateFunction {
+        &self.func
+    }
+
+    /// The expression to aggregate.
+    pub fn expression(&self) -> &Expression {
+        self.expression.as_ref()
+    }
+
     /// Returns the name of the aggregate function.
     pub fn name(&self) -> &str {
         self.func.name()
