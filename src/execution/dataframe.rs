@@ -7,7 +7,9 @@ use crate::{
     error::Result,
     expression::logical::expr::Expression,
     plan::{
-        logical::{filter::Filter, plan::LogicalPlan, projection::Projection},
+        logical::{
+            aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection,
+        },
         planner::Planner,
     },
 };
@@ -54,15 +56,69 @@ impl DataFrame {
 
         Ok(Self { plan })
     }
+
+    /// Performs an aggregation operation based on the
+    /// provided grouping and aggregation expressions.
+    pub fn aggregate(
+        self,
+        group_by: Vec<Expression>,
+        aggregate_expressions: Vec<Expression>,
+    ) -> Result<Self> {
+        let input = self.plan;
+        let plan = LogicalPlan::Aggregate(Aggregate::try_new(
+            Arc::new(input),
+            group_by,
+            aggregate_expressions,
+        )?);
+
+        Ok(Self { plan })
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use arrow::util::pretty;
+
     use crate::{
         execution::context::SessionContext,
-        expression::logical::expr_fn::{col, lit},
+        expression::logical::expr_fn::{col, count, lit},
         io::reader::csv::options::CsvReadOptions,
     };
+
+    use super::DataFrame;
+
+    async fn assert_df_results(df: &DataFrame, expected: Vec<&str>) {
+        let results = df.collect().await.unwrap();
+        let results = pretty::pretty_format_batches(&results).unwrap().to_string();
+        let results = results.trim().lines().collect::<Vec<_>>();
+        assert_eq!(results, expected);
+    }
+
+    #[tokio::test]
+    async fn test_dataframe_aggregate_no_groupings() {
+        let ctx = SessionContext::new();
+
+        let group_by = vec![];
+        let aggregate_expressions = vec![count(col("c1"))];
+
+        let df = ctx
+            .read_csv("testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap()
+            .filter(col("c1").eq(lit("a")))
+            .unwrap()
+            .aggregate(group_by, aggregate_expressions)
+            .unwrap();
+
+        let expected = vec![
+            "+-----------+",
+            "| COUNT(c1) |",
+            "+-----------+",
+            "| 1         |",
+            "+-----------+",
+        ];
+
+        assert_df_results(&df, expected).await;
+    }
 
     #[tokio::test]
     async fn test_dataframe_filter_csv() {
