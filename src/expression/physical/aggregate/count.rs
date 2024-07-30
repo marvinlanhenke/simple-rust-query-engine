@@ -80,20 +80,6 @@ impl Accumulator for CountAccumulator {
         self.count += (array.len() - null_count) as i64;
         Ok(())
     }
-
-    fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()> {
-        let counts = states[0]
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .ok_or_else(|| Error::Arrow {
-                message: "Failed to downcast array".to_string(),
-                location: location!(),
-            })?;
-        if let Some(update) = compute::sum(counts) {
-            self.count += update;
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]

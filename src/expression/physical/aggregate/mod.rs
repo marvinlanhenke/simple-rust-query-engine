@@ -19,9 +19,6 @@ pub trait Accumulator: Send + Sync + Debug {
 
     /// Updates the accumulator's state from its input.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()>;
-
-    /// Updates the accumulator's state from an `Array`.
-    fn merge_batch(&mut self, states: &[ArrayRef]) -> Result<()>;
 }
 
 /// A trait that represents an [`AggregateExpr`].

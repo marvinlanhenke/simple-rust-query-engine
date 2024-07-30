@@ -104,7 +104,11 @@ impl ExecutionPlan for AggregateExec {
         let input = self.input.execute()?;
 
         let stream = if self.group_by.is_empty() {
-            StreamType::AggregateStream(AggregateStream::new(input, self.schema()))
+            StreamType::AggregateStream(AggregateStream::try_new(
+                input,
+                self.schema(),
+                self.aggregate_expressions.as_slice(),
+            )?)
         } else {
             StreamType::GroupedHash(GroupedHashAggregateStream {})
         };
