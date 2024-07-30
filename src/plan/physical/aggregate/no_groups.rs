@@ -15,14 +15,25 @@ use futures::{Stream, StreamExt};
 
 use crate::io::RecordBatchStream;
 
+/// Represents the inner state for an [`AggregateStream`].
 struct AggregateStreamInner {
+    /// The input stream of `RecordBatch`'es
     input: RecordBatchStream,
+    /// The schema after the aggregation.
     schema: SchemaRef,
+    /// The aggregate expressions to be evaluated.
     aggregate_expressions: Vec<Vec<Arc<dyn PhysicalExpression>>>,
+    /// The accumulator used to maintain the aggregation state.
     accumulators: Vec<Box<dyn Accumulator>>,
+    /// Indicates whether the aggregation is finished.
     finished: bool,
 }
 impl AggregateStreamInner {
+    /// Updates the accumulators with values from a given `RecordBatch`.
+    ///
+    /// This method iterates pairwise over expression and accumulator,
+    /// evaluates the expression against the current `RecordBatch`, converts the results into arrays,
+    /// and uses these arrays to update the corresponding accumulator.
     fn aggregate_batch(&mut self, batch: &RecordBatch) -> Result<()> {
         self.accumulators
             .iter_mut()
@@ -36,6 +47,9 @@ impl AggregateStreamInner {
             })
     }
 
+    /// Finalizes the aggregation and returns the result.
+    ///
+    /// This method evaluates the accumulators and returns the final aggregated values as an array.
     fn finalize_aggregation(&mut self) -> Result<Vec<ArrayRef>> {
         self.accumulators
             .iter_mut()
@@ -44,11 +58,14 @@ impl AggregateStreamInner {
     }
 }
 
+/// Represents an aggregate stream with no groupings.
 pub struct AggregateStream {
+    /// The inner stream of `RecordBatch`'es.
     inner: RecordBatchStream,
 }
 
 impl AggregateStream {
+    /// Attempts to create a new [`AggregateStream`] instance.
     pub fn try_new(
         input: RecordBatchStream,
         schema: SchemaRef,
@@ -91,6 +108,7 @@ impl AggregateStream {
         Ok(Self { inner: stream })
     }
 
+    /// Creates the accumulators for the aggregate expressions.
     fn create_accumulators(
         aggregate_exprs: &[Arc<dyn AggregateExpr>],
     ) -> Result<Vec<Box<dyn Accumulator>>> {
@@ -100,6 +118,7 @@ impl AggregateStream {
             .collect()
     }
 
+    /// Creates the aggregate expressions by collecting the underlying `PhysicalExpression`s.
     fn create_aggregate_expressions(
         aggregate_exprs: &[Arc<dyn AggregateExpr>],
     ) -> Vec<Vec<Arc<dyn PhysicalExpression>>> {
