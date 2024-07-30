@@ -26,6 +26,17 @@ impl CountExpr {
             expressions: vec![expression],
         }
     }
+
+    /// Returns the function's name including it's expressions.
+    pub fn name(&self) -> String {
+        let expr_str = self
+            .expressions
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("COUNT({})", expr_str)
+    }
 }
 
 impl AggregateExpr for CountExpr {
@@ -34,11 +45,11 @@ impl AggregateExpr for CountExpr {
     }
 
     fn field(&self) -> Result<Field> {
-        Ok(Field::new("COUNT", DataType::Int64, true))
+        Ok(Field::new(self.name(), DataType::Int64, true))
     }
 
     fn state_fields(&self) -> Result<Vec<Field>> {
-        Ok(vec![Field::new("COUNT", DataType::Int64, true)])
+        Ok(vec![Field::new(self.name(), DataType::Int64, true)])
     }
 
     fn expressions(&self) -> Vec<Arc<dyn PhysicalExpression>> {
