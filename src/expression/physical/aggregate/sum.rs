@@ -1,9 +1,12 @@
-use std::{any::Any, sync::Arc};
+use std::{any::Any, fmt::Debug, sync::Arc};
 
 use arrow::{
-    array::{ArrayRef, ArrowNativeTypeOp, Int64Array},
+    array::{ArrayRef, ArrowNativeTypeOp, ArrowNumericType, AsArray},
     compute,
-    datatypes::{DataType, Field},
+    datatypes::{
+        ArrowNativeType, DataType, Field, Int16Type, Int32Type, Int64Type, UInt16Type, UInt32Type,
+        UInt64Type,
+    },
 };
 use snafu::location;
 
@@ -17,12 +20,16 @@ use super::{Accumulator, AggregateExpr};
 #[derive(Debug)]
 pub struct SumExpr {
     expressions: Vec<Arc<dyn PhysicalExpression>>,
+    data_type: DataType,
 }
 
 impl SumExpr {
     /// Creates a new [`SumExpr`] instance.
-    pub fn new(expressions: Vec<Arc<dyn PhysicalExpression>>) -> Self {
-        Self { expressions }
+    pub fn new(expressions: Vec<Arc<dyn PhysicalExpression>>, data_type: DataType) -> Self {
+        Self {
+            expressions,
+            data_type,
+        }
     }
 
     /// Returns the function's name including it's expressions.
@@ -35,6 +42,12 @@ impl SumExpr {
             .join(", ");
         format!("SUM({})", expr_str)
     }
+}
+
+macro_rules! make_accumulator {
+    ($t:ty, $dt:expr) => {
+        Ok(Box::new(SumAccumulator::<$t>::new($dt.clone())))
+    };
 }
 
 impl AggregateExpr for SumExpr {
@@ -55,41 +68,55 @@ impl AggregateExpr for SumExpr {
     }
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(SumAccumulator::new()))
+        match self.data_type {
+            DataType::Int16 => make_accumulator!(Int16Type, self.data_type),
+            DataType::Int32 => make_accumulator!(Int32Type, self.data_type),
+            DataType::Int64 => make_accumulator!(Int64Type, self.data_type),
+            DataType::UInt16 => make_accumulator!(UInt16Type, self.data_type),
+            DataType::UInt32 => make_accumulator!(UInt32Type, self.data_type),
+            DataType::UInt64 => make_accumulator!(UInt64Type, self.data_type),
+            _ => Err(Error::InvalidOperation {
+                message: format!("Sum not supported for datatype {}", self.data_type),
+                location: location!(),
+            }),
+        }
     }
 }
 
-#[derive(Debug, Default)]
-pub struct SumAccumulator {
-    sum: Option<i64>,
+pub struct SumAccumulator<T: ArrowNumericType> {
+    sum: Option<T::Native>,
+    data_type: DataType,
 }
 
-impl SumAccumulator {
-    pub fn new() -> Self {
-        Self::default()
+impl<T: ArrowNumericType> Debug for SumAccumulator<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SumAccumulator({})", self.data_type)
     }
 }
 
-impl Accumulator for SumAccumulator {
+impl<T: ArrowNumericType> SumAccumulator<T> {
+    pub fn new(data_type: DataType) -> Self {
+        Self {
+            sum: None,
+            data_type,
+        }
+    }
+}
+
+impl<T: ArrowNumericType> Accumulator for SumAccumulator<T> {
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
         Ok(vec![self.eval()?])
     }
 
     fn eval(&mut self) -> Result<ScalarValue> {
-        Ok(ScalarValue::Int64(self.sum))
+        ScalarValue::new_primitive::<T>(self.sum, &self.data_type)
     }
 
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
-        let array = &values[0]
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .ok_or_else(|| Error::Arrow {
-                message: "Failed to downcast array".to_string(),
-                location: location!(),
-            })?;
+        let array = values[0].as_primitive::<T>();
         if let Some(delta) = compute::sum(array) {
-            let s = self.sum.get_or_insert(0);
-            *s = s.add_checked(delta)?;
+            let s = self.sum.get_or_insert(T::Native::usize_as(0));
+            *s = s.add_wrapping(delta);
         }
         Ok(())
     }
@@ -98,6 +125,8 @@ impl Accumulator for SumAccumulator {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+
+    use arrow::datatypes::DataType;
 
     use crate::{
         expression::{
@@ -112,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_sum_accumulator() {
-        let expr = SumExpr::new(vec![Arc::new(ColumnExpr::new("a", 0))]);
+        let expr = SumExpr::new(vec![Arc::new(ColumnExpr::new("a", 0))], DataType::Int64);
         let batch = create_record_batch();
         let mut accum = expr.create_accumulator().unwrap();
 

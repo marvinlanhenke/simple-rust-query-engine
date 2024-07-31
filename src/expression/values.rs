@@ -4,9 +4,10 @@ use crate::error::{Error, Result};
 use arrow::{
     array::{
         make_array, Array, ArrayData, ArrayRef, BooleanArray, Int16Array, Int32Array, Int64Array,
-        Int8Array, Scalar, StringArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+        Int8Array, PrimitiveArray, Scalar, StringArray, UInt16Array, UInt32Array, UInt64Array,
+        UInt8Array,
     },
-    datatypes::DataType,
+    datatypes::{ArrowPrimitiveType, DataType},
 };
 use snafu::location;
 
@@ -77,6 +78,21 @@ pub enum ScalarValue {
 }
 
 impl ScalarValue {
+    /// Create a [`ScalarValue`] from provided value and datatype.
+    pub fn new_primitive<T: ArrowPrimitiveType>(
+        value: Option<T::Native>,
+        data_type: &DataType,
+    ) -> Result<Self> {
+        match value {
+            None => data_type.try_into(),
+            Some(v) => {
+                let array = PrimitiveArray::<T>::new(vec![v].into(), None)
+                    .with_data_type(data_type.clone());
+                Self::try_from_array(&array, 0)
+            }
+        }
+    }
+
     /// Attempts to create a [`ScalarValue`] from an array element.
     pub fn try_from_array(array: &dyn Array, index: usize) -> Result<Self> {
         if !array.is_valid(index) {
