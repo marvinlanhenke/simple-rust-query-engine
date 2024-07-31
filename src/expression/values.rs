@@ -1,11 +1,11 @@
-use std::{fmt::Display, iter, sync::Arc};
+use std::{fmt::Display, hash::Hash, iter, sync::Arc};
 
 use crate::error::{Error, Result};
 use arrow::{
     array::{
-        make_array, Array, ArrayData, ArrayRef, BooleanArray, Int16Array, Int32Array, Int64Array,
-        Int8Array, PrimitiveArray, Scalar, StringArray, UInt16Array, UInt32Array, UInt64Array,
-        UInt8Array,
+        make_array, Array, ArrayData, ArrayRef, BooleanArray, Float32Array, Float64Array,
+        Int16Array, Int32Array, Int64Array, Int8Array, PrimitiveArray, Scalar, StringArray,
+        UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     datatypes::{ArrowPrimitiveType, DataType},
 };
@@ -62,7 +62,7 @@ macro_rules! typed_cast {
 }
 
 /// An enum representing the different types of `ScalarValue`'s.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum ScalarValue {
     Null,
     Boolean(Option<bool>),
@@ -74,7 +74,88 @@ pub enum ScalarValue {
     UInt16(Option<u16>),
     UInt32(Option<u32>),
     UInt64(Option<u64>),
+    Float32(Option<f32>),
+    Float64(Option<f64>),
     Utf8(Option<String>),
+}
+
+impl PartialEq for ScalarValue {
+    fn eq(&self, other: &Self) -> bool {
+        use ScalarValue::*;
+
+        match (self, other) {
+            (Null, Null) => true,
+            (Null, _) => false,
+            (Boolean(l), Boolean(r)) => l.eq(r),
+            (Boolean(_), _) => false,
+            (Int8(l), Int8(r)) => l.eq(r),
+            (Int8(_), _) => false,
+            (Int16(l), Int16(r)) => l.eq(r),
+            (Int16(_), _) => false,
+            (Int32(l), Int32(r)) => l.eq(r),
+            (Int32(_), _) => false,
+            (Int64(l), Int64(r)) => l.eq(r),
+            (Int64(_), _) => false,
+            (UInt8(l), UInt8(r)) => l.eq(r),
+            (UInt8(_), _) => false,
+            (UInt16(l), UInt16(r)) => l.eq(r),
+            (UInt16(_), _) => false,
+            (UInt32(l), UInt32(r)) => l.eq(r),
+            (UInt32(_), _) => false,
+            (UInt64(l), UInt64(r)) => l.eq(r),
+            (UInt64(_), _) => false,
+            (Utf8(l), Utf8(r)) => l.eq(r),
+            (Utf8(_), _) => false,
+            (Float32(l), Float32(r)) => match (l, r) {
+                (Some(f1), Some(f2)) => f1.to_bits() == f2.to_bits(),
+                _ => l.eq(r),
+            },
+            (Float32(_), _) => false,
+            (Float64(l), Float64(r)) => match (l, r) {
+                (Some(f1), Some(f2)) => f1.to_bits() == f2.to_bits(),
+                _ => l.eq(r),
+            },
+            (Float64(_), _) => false,
+        }
+    }
+}
+
+impl Eq for ScalarValue {}
+
+struct FloatWrapper<T>(T);
+
+impl Hash for FloatWrapper<f32> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(&f32::from_ne_bytes(self.0.to_ne_bytes()).to_ne_bytes())
+    }
+}
+
+impl Hash for FloatWrapper<f64> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(&f64::from_ne_bytes(self.0.to_ne_bytes()).to_ne_bytes())
+    }
+}
+
+impl Hash for ScalarValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        use ScalarValue::*;
+
+        match self {
+            Null => 1.hash(state),
+            Boolean(v) => v.hash(state),
+            Int8(v) => v.hash(state),
+            Int16(v) => v.hash(state),
+            Int32(v) => v.hash(state),
+            Int64(v) => v.hash(state),
+            UInt8(v) => v.hash(state),
+            UInt16(v) => v.hash(state),
+            UInt32(v) => v.hash(state),
+            UInt64(v) => v.hash(state),
+            Utf8(v) => v.hash(state),
+            Float32(v) => v.map(FloatWrapper).hash(state),
+            Float64(v) => v.map(FloatWrapper).hash(state),
+        }
+    }
 }
 
 impl ScalarValue {
@@ -111,6 +192,8 @@ impl ScalarValue {
             DataType::UInt32 => typed_cast!(array, index, UInt32Array, UInt32)?,
             DataType::UInt64 => typed_cast!(array, index, UInt64Array, UInt64)?,
             DataType::Utf8 => typed_cast!(array, index, StringArray, Utf8)?,
+            DataType::Float32 => typed_cast!(array, index, Float32Array, Float32)?,
+            DataType::Float64 => typed_cast!(array, index, Float64Array, Float64)?,
             other => {
                 return Err(Error::InvalidOperation {
                     message: format!(
@@ -137,6 +220,8 @@ impl ScalarValue {
             ScalarValue::UInt32(_) => DataType::UInt32,
             ScalarValue::UInt64(_) => DataType::UInt64,
             ScalarValue::Utf8(_) => DataType::Utf8,
+            ScalarValue::Float32(_) => DataType::Float32,
+            ScalarValue::Float64(_) => DataType::Float64,
         }
     }
 
@@ -154,6 +239,8 @@ impl ScalarValue {
             ScalarValue::UInt32(v) => v.is_none(),
             ScalarValue::UInt64(v) => v.is_none(),
             ScalarValue::Utf8(v) => v.is_none(),
+            ScalarValue::Float32(v) => v.is_none(),
+            ScalarValue::Float64(v) => v.is_none(),
         }
     }
 
@@ -175,6 +262,8 @@ impl ScalarValue {
             ScalarValue::UInt16(v) => build_array_from_option!(UInt16, UInt16Array, v, num_rows),
             ScalarValue::UInt32(v) => build_array_from_option!(UInt32, UInt32Array, v, num_rows),
             ScalarValue::UInt64(v) => build_array_from_option!(UInt64, UInt64Array, v, num_rows),
+            ScalarValue::Float32(v) => build_array_from_option!(Float32, Float32Array, v, num_rows),
+            ScalarValue::Float64(v) => build_array_from_option!(Float64, Float64Array, v, num_rows),
             ScalarValue::Utf8(v) => match v {
                 Some(v) => Arc::new(StringArray::from_iter_values(
                     iter::repeat(v).take(num_rows),
@@ -210,6 +299,8 @@ impl TryFrom<&DataType> for ScalarValue {
             DataType::UInt16 => ScalarValue::UInt16(None),
             DataType::UInt32 => ScalarValue::UInt32(None),
             DataType::UInt64 => ScalarValue::UInt64(None),
+            DataType::Float32 => ScalarValue::Float32(None),
+            DataType::Float64 => ScalarValue::Float64(None),
             DataType::Utf8 => ScalarValue::Utf8(None),
             _ => {
                 return Err(Error::InvalidOperation {
@@ -246,6 +337,8 @@ impl Display for ScalarValue {
             ScalarValue::UInt16(v) => format_option!(f, v),
             ScalarValue::UInt32(v) => format_option!(f, v),
             ScalarValue::UInt64(v) => format_option!(f, v),
+            ScalarValue::Float32(v) => format_option!(f, v),
+            ScalarValue::Float64(v) => format_option!(f, v),
             ScalarValue::Utf8(v) => format_option!(f, v),
         }
     }
