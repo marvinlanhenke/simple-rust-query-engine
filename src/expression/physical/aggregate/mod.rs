@@ -8,6 +8,7 @@ use super::expr::PhysicalExpression;
 
 pub mod average;
 pub mod count;
+pub mod min_max;
 pub mod sum;
 
 /// Tracks an aggregate function's state.
