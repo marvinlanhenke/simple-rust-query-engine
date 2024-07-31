@@ -81,7 +81,7 @@ mod tests {
 
     use crate::{
         execution::context::SessionContext,
-        expression::logical::expr_fn::{col, count, lit},
+        expression::logical::expr_fn::{col, count, lit, sum},
         io::reader::csv::options::CsvReadOptions,
     };
 
@@ -99,24 +99,23 @@ mod tests {
         let ctx = SessionContext::new();
 
         let group_by = vec![];
-        let aggregate_expressions = vec![count(col("c1"))];
+        let aggregate_expressions = vec![count(col("c1")), sum(col("c2"))];
 
         let df = ctx
             .read_csv("testdata/csv/simple.csv", CsvReadOptions::new())
             .unwrap()
-            .filter(col("c1").eq(lit("a")))
+            .filter(col("c1").neq(lit("a")))
             .unwrap()
             .aggregate(group_by, aggregate_expressions)
             .unwrap();
 
         let expected = vec![
-            "+-----------+",
-            "| COUNT(c1) |",
-            "+-----------+",
-            "| 1         |",
-            "+-----------+",
+            "+-----------+---------+",
+            "| COUNT(c1) | SUM(c2) |",
+            "+-----------+---------+",
+            "| 5         | 20      |",
+            "+-----------+---------+",
         ];
-
         assert_df_results(&df, expected).await;
     }
 

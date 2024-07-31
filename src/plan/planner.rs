@@ -8,7 +8,7 @@ use crate::{
     expression::{
         logical::{aggregate::AggregateFunction, expr::Expression},
         physical::{
-            aggregate::{count::CountExpr, AggregateExpr},
+            aggregate::{count::CountExpr, sum::SumExpr, AggregateExpr},
             binary::BinaryExpr,
             column::ColumnExpr,
             expr::PhysicalExpression,
@@ -83,9 +83,12 @@ impl Planner {
         for expr in plan.aggregate_expressions().iter() {
             if let Expression::Aggregate(agg) = expr {
                 let phys_expr = Self::create_physical_expression(plan.input(), agg.expression())?;
-                let aggr_expr = match agg.func() {
+                let aggr_expr: Arc<dyn AggregateExpr> = match agg.func() {
                     AggregateFunction::Count => Arc::new(CountExpr::new(phys_expr)),
-                    AggregateFunction::Sum => todo!(),
+                    AggregateFunction::Sum => {
+                        let data_type = phys_expr.data_type(&plan.schema())?;
+                        Arc::new(SumExpr::new(vec![phys_expr], data_type))
+                    }
                 };
                 aggregate_expressions.push(aggr_expr);
             };
