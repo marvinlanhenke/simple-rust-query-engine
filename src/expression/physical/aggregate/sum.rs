@@ -4,8 +4,8 @@ use arrow::{
     array::{ArrayRef, ArrowNativeTypeOp, ArrowNumericType, AsArray},
     compute,
     datatypes::{
-        ArrowNativeType, DataType, Field, Int16Type, Int32Type, Int64Type, UInt16Type, UInt32Type,
-        UInt64Type,
+        ArrowNativeType, DataType, Field, Float32Type, Float64Type, Int16Type, Int32Type,
+        Int64Type, UInt16Type, UInt32Type, UInt64Type,
     },
 };
 use snafu::location;
@@ -69,6 +69,8 @@ impl AggregateExpr for SumExpr {
             DataType::UInt16 => make_accumulator!(UInt16Type, self.data_type),
             DataType::UInt32 => make_accumulator!(UInt32Type, self.data_type),
             DataType::UInt64 => make_accumulator!(UInt64Type, self.data_type),
+            DataType::Float32 => make_accumulator!(Float32Type, self.data_type),
+            DataType::Float64 => make_accumulator!(Float64Type, self.data_type),
             _ => Err(Error::InvalidOperation {
                 message: format!("Sum not supported for datatype {}", self.data_type),
                 location: location!(),
