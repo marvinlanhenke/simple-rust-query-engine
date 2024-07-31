@@ -30,6 +30,8 @@ macro_rules! make_aggregate_expr {
 make_aggregate_expr!(count, Count);
 make_aggregate_expr!(sum, Sum);
 make_aggregate_expr!(avg, Avg);
+make_aggregate_expr!(min, Min);
+make_aggregate_expr!(max, Max);
 
 /// Creates an [`Expression::Literal`].
 pub fn lit<T: LiteralExt>(value: T) -> Expression {

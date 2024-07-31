@@ -8,7 +8,13 @@ use crate::{
     expression::{
         logical::{aggregate::AggregateFunction, expr::Expression},
         physical::{
-            aggregate::{average::AvgExpr, count::CountExpr, sum::SumExpr, AggregateExpr},
+            aggregate::{
+                average::AvgExpr,
+                count::CountExpr,
+                min_max::{MaxExpr, MinExpr},
+                sum::SumExpr,
+                AggregateExpr,
+            },
             binary::BinaryExpr,
             column::ColumnExpr,
             expr::PhysicalExpression,
@@ -22,6 +28,13 @@ use crate::{
 };
 
 use super::{logical::aggregate::Aggregate, physical::plan::ExecutionPlan};
+
+macro_rules! make_aggregate_expr {
+    ($e:expr, $plan:expr, $ty:ident) => {{
+        let data_type = $e.data_type(&$plan.schema())?;
+        Arc::new($ty::new($e, data_type))
+    }};
+}
 
 /// The query [`Planner`].
 ///
@@ -85,14 +98,10 @@ impl Planner {
                 let phys_expr = Self::create_physical_expression(plan.input(), agg.expression())?;
                 let aggr_expr: Arc<dyn AggregateExpr> = match agg.func() {
                     AggregateFunction::Count => Arc::new(CountExpr::new(phys_expr)),
-                    AggregateFunction::Sum => {
-                        let data_type = phys_expr.data_type(&plan.schema())?;
-                        Arc::new(SumExpr::new(phys_expr, data_type))
-                    }
-                    AggregateFunction::Avg => {
-                        let data_type = phys_expr.data_type(&plan.schema())?;
-                        Arc::new(AvgExpr::new(phys_expr, data_type))
-                    }
+                    AggregateFunction::Sum => make_aggregate_expr!(phys_expr, plan, SumExpr),
+                    AggregateFunction::Avg => make_aggregate_expr!(phys_expr, plan, AvgExpr),
+                    AggregateFunction::Max => make_aggregate_expr!(phys_expr, plan, MaxExpr),
+                    AggregateFunction::Min => make_aggregate_expr!(phys_expr, plan, MinExpr),
                 };
                 aggregate_expressions.push(aggr_expr);
             };

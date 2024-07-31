@@ -81,7 +81,7 @@ mod tests {
 
     use crate::{
         execution::context::SessionContext,
-        expression::logical::expr_fn::{avg, col, count, lit, sum},
+        expression::logical::expr_fn::{avg, col, count, lit, max, min, sum},
         io::reader::csv::options::CsvReadOptions,
     };
 
@@ -99,7 +99,13 @@ mod tests {
         let ctx = SessionContext::new();
 
         let group_by = vec![];
-        let aggregate_expressions = vec![count(col("c1")), sum(col("c2")), avg(col("c2"))];
+        let aggregate_expressions = vec![
+            count(col("c1")),
+            sum(col("c2")),
+            avg(col("c2")),
+            max(col("c2")),
+            min(col("c2")),
+        ];
 
         let df = ctx
             .read_csv("testdata/csv/simple.csv", CsvReadOptions::new())
@@ -109,12 +115,14 @@ mod tests {
             .aggregate(group_by, aggregate_expressions)
             .unwrap();
 
+        df.show().await.unwrap();
+
         let expected = vec![
-            "+-----------+---------+---------+",
-            "| COUNT(c1) | SUM(c2) | AVG(c2) |",
-            "+-----------+---------+---------+",
-            "| 5         | 20      | 4.0     |",
-            "+-----------+---------+---------+",
+            "+-----------+---------+---------+---------+---------+",
+            "| COUNT(c1) | SUM(c2) | AVG(c2) | MAX(c2) | MIN(c2) |",
+            "+-----------+---------+---------+---------+---------+",
+            "| 5         | 20      | 4.0     | 6       | 2       |",
+            "+-----------+---------+---------+---------+---------+",
         ];
         assert_df_results(&df, expected).await;
     }

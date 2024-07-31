@@ -15,6 +15,10 @@ pub enum AggregateFunction {
     Sum,
     /// An avg function (e.g. `SELECT AVG(c1) from t;`)
     Avg,
+    /// A max function (e.g. `SELECT MAX(c1) from t;`)
+    Max,
+    /// A min function (e.g. `SELECT MIN(c1) from t;`)
+    Min,
 }
 
 impl AggregateFunction {
@@ -24,15 +28,21 @@ impl AggregateFunction {
             AggregateFunction::Count => "COUNT",
             AggregateFunction::Sum => "SUM",
             AggregateFunction::Avg => "AVG",
+            AggregateFunction::Max => "MAX",
+            AggregateFunction::Min => "MIN",
         }
     }
 
     /// Returns the result data type of the aggregate function.
     pub fn result_type(&self) -> Result<DataType> {
+        // TODO: Avoid hard-coding the values,
+        // should be determined by input data_type; or up/downcasted?
         match self {
             AggregateFunction::Count => Ok(DataType::Int64),
             AggregateFunction::Sum => Ok(DataType::Int64),
             AggregateFunction::Avg => Ok(DataType::Float64),
+            AggregateFunction::Max => Ok(DataType::Float64),
+            AggregateFunction::Min => Ok(DataType::Float64),
         }
     }
 }
