@@ -128,6 +128,117 @@ impl<T: ArrowNumericType> Accumulator for MaxAccumulator<T> {
     }
 }
 
+/// Represents a min aggregate expression.
+#[derive(Debug)]
+pub struct MinExpr {
+    /// The input expression used by the accumulator.
+    expression: Arc<dyn PhysicalExpression>,
+    /// The input datatype.
+    data_type: DataType,
+}
+
+impl MinExpr {
+    /// Creates a new [`MinExpr`] instance.
+    pub fn new(expression: Arc<dyn PhysicalExpression>, data_type: DataType) -> Self {
+        Self {
+            expression,
+            data_type,
+        }
+    }
+
+    /// Returns the function's name including it's expressions.
+    pub fn name(&self) -> String {
+        format!("MIN({})", self.expression)
+    }
+}
+
+/// Creates an type specific min accumulator.
+macro_rules! make_min_accumulator {
+    ($t:ty, $dt:expr) => {
+        Ok(Box::new(MinAccumulator::<$t>::try_new($dt.clone())?))
+    };
+}
+
+impl AggregateExpr for MinExpr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn field(&self) -> Result<Field> {
+        Ok(Field::new(self.name(), self.data_type.clone(), true))
+    }
+
+    fn state_fields(&self) -> Result<Vec<Field>> {
+        Ok(vec![Field::new(self.name(), self.data_type.clone(), true)])
+    }
+
+    fn expressions(&self) -> Vec<Arc<dyn PhysicalExpression>> {
+        vec![self.expression.clone()]
+    }
+
+    fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
+        match self.data_type {
+            DataType::Int16 => make_min_accumulator!(Int16Type, self.data_type),
+            DataType::Int32 => make_min_accumulator!(Int32Type, self.data_type),
+            DataType::Int64 => make_min_accumulator!(Int64Type, self.data_type),
+            DataType::UInt16 => make_min_accumulator!(UInt16Type, self.data_type),
+            DataType::UInt32 => make_min_accumulator!(UInt32Type, self.data_type),
+            DataType::UInt64 => make_min_accumulator!(UInt64Type, self.data_type),
+            DataType::Float32 => make_min_accumulator!(Float32Type, self.data_type),
+            DataType::Float64 => make_min_accumulator!(Float64Type, self.data_type),
+            _ => Err(Error::InvalidOperation {
+                message: format!("Sum not supported for datatype {}", self.data_type),
+                location: location!(),
+            }),
+        }
+    }
+}
+
+/// Represents the accumulator for the min expression.
+pub struct MinAccumulator<T: ArrowNumericType> {
+    /// The current min.
+    min: Option<T::Native>,
+    /// The input datatype.
+    data_type: DataType,
+}
+
+impl<T: ArrowNumericType> Debug for MinAccumulator<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MinAccumulator({})", self.data_type)
+    }
+}
+
+impl<T: ArrowNumericType> MinAccumulator<T> {
+    /// Attempts to create a new [`MinAccumulator`] instance.
+    pub fn try_new(data_type: DataType) -> Result<Self> {
+        Ok(Self {
+            min: None,
+            data_type,
+        })
+    }
+}
+
+impl<T: ArrowNumericType> Accumulator for MinAccumulator<T> {
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        Ok(vec![self.eval()?])
+    }
+
+    fn eval(&mut self) -> Result<ScalarValue> {
+        ScalarValue::new_primitive::<T>(self.min, &self.data_type)
+    }
+
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        let array = values[0].as_primitive::<T>();
+        if let Some(new_min) = compute::min(array) {
+            let curr_min = self.min.get_or_insert(T::Native::usize_as(0));
+            if new_min.is_gt(*curr_min) {
+                *curr_min = new_min
+            }
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -136,7 +247,10 @@ mod tests {
 
     use crate::{
         expression::{
-            physical::{aggregate::AggregateExpr, column::ColumnExpr},
+            physical::{
+                aggregate::{min_max::MinExpr, AggregateExpr},
+                column::ColumnExpr,
+            },
             values::ScalarValue,
         },
         tests::create_record_batch,
@@ -153,6 +267,19 @@ mod tests {
         accum.update_batch(&[batch.column(1).clone()]).unwrap();
         let result = accum.eval().unwrap();
         let expected = ScalarValue::Int64(Some(2));
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_min_accumulator() {
+        let expr = MinExpr::new(Arc::new(ColumnExpr::new("a", 0)), DataType::Int64);
+        let batch = create_record_batch();
+        let mut accum = expr.create_accumulator().unwrap();
+
+        accum.update_batch(&[batch.column(1).clone()]).unwrap();
+        let result = accum.eval().unwrap();
+        let expected = ScalarValue::Int64(Some(1));
 
         assert_eq!(result, expected);
     }
