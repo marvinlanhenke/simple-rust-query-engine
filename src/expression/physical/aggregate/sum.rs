@@ -19,28 +19,22 @@ use super::{Accumulator, AggregateExpr};
 
 #[derive(Debug)]
 pub struct SumExpr {
-    expressions: Vec<Arc<dyn PhysicalExpression>>,
+    expression: Arc<dyn PhysicalExpression>,
     data_type: DataType,
 }
 
 impl SumExpr {
     /// Creates a new [`SumExpr`] instance.
-    pub fn new(expressions: Vec<Arc<dyn PhysicalExpression>>, data_type: DataType) -> Self {
+    pub fn new(expression: Arc<dyn PhysicalExpression>, data_type: DataType) -> Self {
         Self {
-            expressions,
+            expression,
             data_type,
         }
     }
 
     /// Returns the function's name including it's expressions.
     pub fn name(&self) -> String {
-        let expr_str = self
-            .expressions
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("SUM({})", expr_str)
+        format!("SUM({})", self.expression)
     }
 }
 
@@ -64,7 +58,7 @@ impl AggregateExpr for SumExpr {
     }
 
     fn expressions(&self) -> Vec<Arc<dyn PhysicalExpression>> {
-        self.expressions.clone()
+        vec![self.expression.clone()]
     }
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
@@ -141,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_sum_accumulator() {
-        let expr = SumExpr::new(vec![Arc::new(ColumnExpr::new("a", 0))], DataType::Int64);
+        let expr = SumExpr::new(Arc::new(ColumnExpr::new("a", 0)), DataType::Int64);
         let batch = create_record_batch();
         let mut accum = expr.create_accumulator().unwrap();
 

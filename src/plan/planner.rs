@@ -87,7 +87,7 @@ impl Planner {
                     AggregateFunction::Count => Arc::new(CountExpr::new(phys_expr)),
                     AggregateFunction::Sum => {
                         let data_type = phys_expr.data_type(&plan.schema())?;
-                        Arc::new(SumExpr::new(vec![phys_expr], data_type))
+                        Arc::new(SumExpr::new(phys_expr, data_type))
                     }
                 };
                 aggregate_expressions.push(aggr_expr);
