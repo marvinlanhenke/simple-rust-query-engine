@@ -19,11 +19,16 @@ pub fn binary_expr(lhs: Expression, op: Operator, rhs: Expression) -> Expression
     Expression::Binary(Binary::new(Arc::new(lhs), op, Arc::new(rhs)))
 }
 
-/// Creates an [`Expression::Aggregate`] with an [`AggregateFunction::Count`]
-/// applied to the provided expression.
-pub fn count(expr: Expression) -> Expression {
-    Expression::Aggregate(Aggregate::new(AggregateFunction::Count, Arc::new(expr)))
+macro_rules! make_aggregate_expr {
+    ($name:ident, $f:ident) => {
+        pub fn $name(expr: Expression) -> Expression {
+            Expression::Aggregate(Aggregate::new(AggregateFunction::$f, Arc::new(expr)))
+        }
+    };
 }
+
+make_aggregate_expr!(count, Count);
+make_aggregate_expr!(sum, Sum);
 
 /// Creates an [`Expression::Literal`].
 pub fn lit<T: LiteralExt>(value: T) -> Expression {
