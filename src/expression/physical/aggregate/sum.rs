@@ -98,6 +98,7 @@ impl<T: ArrowNumericType> Debug for SumAccumulator<T> {
 }
 
 impl<T: ArrowNumericType> SumAccumulator<T> {
+    /// Create a new [`SumAccumulator`] instance.
     pub fn new(data_type: DataType) -> Self {
         Self {
             sum: None,

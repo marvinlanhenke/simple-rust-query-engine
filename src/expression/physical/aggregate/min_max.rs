@@ -17,13 +17,17 @@ use crate::{
 
 use super::{Accumulator, AggregateExpr};
 
+/// Represents a max aggregate expression.
 #[derive(Debug)]
 pub struct MaxExpr {
+    /// The input expression used by the accumulator.
     expression: Arc<dyn PhysicalExpression>,
+    /// The input datatype.
     data_type: DataType,
 }
 
 impl MaxExpr {
+    /// Creates a new [`MaxExpr`] instance.
     pub fn new(expression: Arc<dyn PhysicalExpression>, data_type: DataType) -> Self {
         Self {
             expression,
@@ -31,12 +35,13 @@ impl MaxExpr {
         }
     }
 
+    /// Returns the function's name including it's expressions.
     pub fn name(&self) -> String {
         format!("MAX({})", self.expression)
     }
 }
 
-/// Creates an type specific accumulator.
+/// Creates an type specific max accumulator.
 macro_rules! make_max_accumulator {
     ($t:ty, $dt:expr) => {
         Ok(Box::new(MaxAccumulator::<$t>::try_new($dt.clone())?))
@@ -78,8 +83,11 @@ impl AggregateExpr for MaxExpr {
     }
 }
 
+/// Represents the accumulator for the max expression.
 pub struct MaxAccumulator<T: ArrowNumericType> {
+    /// The current max.
     max: Option<T::Native>,
+    /// The input datatype.
     data_type: DataType,
 }
 
@@ -90,6 +98,7 @@ impl<T: ArrowNumericType> Debug for MaxAccumulator<T> {
 }
 
 impl<T: ArrowNumericType> MaxAccumulator<T> {
+    /// Attempts to create a new [`MaxAccumulator`] instance.
     pub fn try_new(data_type: DataType) -> Result<Self> {
         Ok(Self {
             max: None,
