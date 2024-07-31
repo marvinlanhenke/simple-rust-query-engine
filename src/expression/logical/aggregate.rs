@@ -9,8 +9,10 @@ use super::expr::Expression;
 /// that can be applied with [`Aggregate`] expressions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AggregateFunction {
-    /// The count function (e.g. `SELECT COUNT(*) FROM a;`)
+    /// A count function (e.g. `SELECT COUNT(*) FROM a;`)
     Count,
+    /// A sum function (e.g. `SELECT SUM(c1) from t;`)
+    Sum,
 }
 
 impl AggregateFunction {
@@ -18,6 +20,7 @@ impl AggregateFunction {
     pub fn name(&self) -> &str {
         match self {
             AggregateFunction::Count => "COUNT",
+            AggregateFunction::Sum => "SUM",
         }
     }
 
@@ -25,6 +28,7 @@ impl AggregateFunction {
     pub fn result_type(&self) -> Result<DataType> {
         match self {
             AggregateFunction::Count => Ok(DataType::Int64),
+            AggregateFunction::Sum => Ok(DataType::Int64),
         }
     }
 }

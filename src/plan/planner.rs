@@ -21,7 +21,7 @@ use crate::{
     },
 };
 
-use super::physical::plan::ExecutionPlan;
+use super::{logical::aggregate::Aggregate, physical::plan::ExecutionPlan};
 
 /// The query [`Planner`].
 ///
@@ -65,21 +65,7 @@ impl Planner {
 
                 // not supported yet
                 let group_by = vec![];
-
-                let mut aggregate_expressions: Vec<Arc<dyn AggregateExpr>> =
-                    Vec::with_capacity(plan.aggregate_expressions().len());
-                for expr in plan.aggregate_expressions().iter() {
-                    if let Expression::Aggregate(agg) = expr {
-                        match agg.func() {
-                            AggregateFunction::Count => {
-                                let phys_expr =
-                                    Self::create_physical_expression(input, agg.expression())?;
-                                let aggr_expr = Arc::new(CountExpr::new(phys_expr));
-                                aggregate_expressions.push(aggr_expr);
-                            }
-                        }
-                    };
-                }
+                let aggregate_expressions = Self::create_aggregate_expression(plan)?;
 
                 Ok(Arc::new(AggregateExec::try_new(
                     physical_input,
@@ -88,6 +74,23 @@ impl Planner {
                 )?))
             }
         }
+    }
+
+    /// Creates aggregate expressions from aggregate plan and aggregate function.
+    fn create_aggregate_expression(plan: &Aggregate) -> Result<Vec<Arc<dyn AggregateExpr>>> {
+        let mut aggregate_expressions: Vec<Arc<dyn AggregateExpr>> =
+            Vec::with_capacity(plan.aggregate_expressions().len());
+        for expr in plan.aggregate_expressions().iter() {
+            if let Expression::Aggregate(agg) = expr {
+                let phys_expr = Self::create_physical_expression(plan.input(), agg.expression())?;
+                let aggr_expr = match agg.func() {
+                    AggregateFunction::Count => Arc::new(CountExpr::new(phys_expr)),
+                    AggregateFunction::Sum => todo!(),
+                };
+                aggregate_expressions.push(aggr_expr);
+            };
+        }
+        Ok(aggregate_expressions)
     }
 
     /// Converts a logical to a physical expression.
