@@ -8,7 +8,7 @@ use crate::{
     expression::{
         logical::{aggregate::AggregateFunction, expr::Expression},
         physical::{
-            aggregate::{count::CountExpr, sum::SumExpr, AggregateExpr},
+            aggregate::{average::AvgExpr, count::CountExpr, sum::SumExpr, AggregateExpr},
             binary::BinaryExpr,
             column::ColumnExpr,
             expr::PhysicalExpression,
@@ -88,6 +88,10 @@ impl Planner {
                     AggregateFunction::Sum => {
                         let data_type = phys_expr.data_type(&plan.schema())?;
                         Arc::new(SumExpr::new(phys_expr, data_type))
+                    }
+                    AggregateFunction::Avg => {
+                        let data_type = phys_expr.data_type(&plan.schema())?;
+                        Arc::new(AvgExpr::new(phys_expr, data_type))
                     }
                 };
                 aggregate_expressions.push(aggr_expr);

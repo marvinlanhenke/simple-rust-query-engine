@@ -13,6 +13,8 @@ pub enum AggregateFunction {
     Count,
     /// A sum function (e.g. `SELECT SUM(c1) from t;`)
     Sum,
+    /// An avg function (e.g. `SELECT AVG(c1) from t;`)
+    Avg,
 }
 
 impl AggregateFunction {
@@ -21,6 +23,7 @@ impl AggregateFunction {
         match self {
             AggregateFunction::Count => "COUNT",
             AggregateFunction::Sum => "SUM",
+            AggregateFunction::Avg => "AVG",
         }
     }
 
@@ -29,6 +32,7 @@ impl AggregateFunction {
         match self {
             AggregateFunction::Count => Ok(DataType::Int64),
             AggregateFunction::Sum => Ok(DataType::Int64),
+            AggregateFunction::Avg => Ok(DataType::Float64),
         }
     }
 }
