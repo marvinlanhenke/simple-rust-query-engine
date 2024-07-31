@@ -6,6 +6,7 @@ use crate::{error::Result, expression::values::ScalarValue};
 
 use super::expr::PhysicalExpression;
 
+pub mod average;
 pub mod count;
 pub mod sum;
 
