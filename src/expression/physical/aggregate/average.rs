@@ -17,14 +17,19 @@ use crate::{
 
 use super::{Accumulator, AggregateExpr};
 
+/// Represents an avg aggregate expression.
 #[derive(Debug)]
 pub struct AvgExpr {
+    /// The input expression used by the accumulator.
     expression: Arc<dyn PhysicalExpression>,
+    /// The input datatype.
     input_data_type: DataType,
+    /// The result datatype.
     output_data_tye: DataType,
 }
 
 impl AvgExpr {
+    /// Creates a new [`AvgExpr`] instance.
     pub fn new(expression: Arc<dyn PhysicalExpression>, input_data_type: DataType) -> Self {
         Self {
             expression,
@@ -33,11 +38,13 @@ impl AvgExpr {
         }
     }
 
+    /// Returns the function's name including it's expressions.
     pub fn name(&self) -> String {
         format!("AVG({})", self.expression)
     }
 }
 
+/// Creates an type specific accumulator.
 macro_rules! make_accumulator {
     ($t:ty, $dt:expr) => {
         Ok(Box::new(AvgAccumulator::<$t>::new($dt.clone())))
@@ -86,9 +93,13 @@ impl AggregateExpr for AvgExpr {
     }
 }
 
+/// Represents the accumulator for the avg expression.
 pub struct AvgAccumulator<T: ArrowNumericType> {
+    /// The current count.
     count: i64,
+    /// The current sum.
     sum: Option<T::Native>,
+    /// The input datatype.
     data_type: DataType,
 }
 

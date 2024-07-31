@@ -17,9 +17,12 @@ use crate::{
 
 use super::{Accumulator, AggregateExpr};
 
+/// Represents a sum aggregate expression.
 #[derive(Debug)]
 pub struct SumExpr {
+    /// The input expression used by the accumulator.
     expression: Arc<dyn PhysicalExpression>,
+    /// The input datatype.
     data_type: DataType,
 }
 
@@ -38,6 +41,7 @@ impl SumExpr {
     }
 }
 
+/// Creates an type specific accumulator.
 macro_rules! make_accumulator {
     ($t:ty, $dt:expr) => {
         Ok(Box::new(SumAccumulator::<$t>::new($dt.clone())))
@@ -79,8 +83,11 @@ impl AggregateExpr for SumExpr {
     }
 }
 
+/// Represents the accumulator for the sum expression.
 pub struct SumAccumulator<T: ArrowNumericType> {
+    /// The current sum.
     sum: Option<T::Native>,
+    /// The input datatype.
     data_type: DataType,
 }
 

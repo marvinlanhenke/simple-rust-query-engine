@@ -15,7 +15,7 @@ use super::{Accumulator, AggregateExpr};
 /// Represents a count aggregate expression.
 #[derive(Debug)]
 pub struct CountExpr {
-    /// The input expressions used by the accumulator.
+    /// The input expression used by the accumulator.
     expression: Arc<dyn PhysicalExpression>,
 }
 
