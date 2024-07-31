@@ -7,6 +7,7 @@ use crate::{error::Result, expression::values::ScalarValue};
 use super::expr::PhysicalExpression;
 
 pub mod count;
+pub mod sum;
 
 /// Tracks an aggregate function's state.
 pub trait Accumulator: Send + Sync + Debug {

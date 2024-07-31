@@ -1,30 +1,28 @@
 use std::{any::Any, sync::Arc};
 
 use arrow::{
-    array::ArrayRef,
+    array::{ArrayRef, ArrowNativeTypeOp, Int64Array},
+    compute,
     datatypes::{DataType, Field},
 };
+use snafu::location;
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     expression::{physical::expr::PhysicalExpression, values::ScalarValue},
 };
 
 use super::{Accumulator, AggregateExpr};
 
-/// Represents a count aggregate expression.
 #[derive(Debug)]
-pub struct CountExpr {
-    /// The input expressions used by the accumulator.
+pub struct SumExpr {
     expressions: Vec<Arc<dyn PhysicalExpression>>,
 }
 
-impl CountExpr {
-    /// Creates a new [`CountExpr`] instance.
-    pub fn new(expression: Arc<dyn PhysicalExpression>) -> Self {
-        Self {
-            expressions: vec![expression],
-        }
+impl SumExpr {
+    /// Creates a new [`SumExpr`] instance.
+    pub fn new(expressions: Vec<Arc<dyn PhysicalExpression>>) -> Self {
+        Self { expressions }
     }
 
     /// Returns the function's name including it's expressions.
@@ -35,11 +33,11 @@ impl CountExpr {
             .map(|e| e.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        format!("COUNT({})", expr_str)
+        format!("SUM({})", expr_str)
     }
 }
 
-impl AggregateExpr for CountExpr {
+impl AggregateExpr for SumExpr {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -57,36 +55,42 @@ impl AggregateExpr for CountExpr {
     }
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(CountAccumulator::new()))
+        Ok(Box::new(SumAccumulator::new()))
     }
 }
 
-/// Represents the accumulator for the count expression.
 #[derive(Debug, Default)]
-pub struct CountAccumulator {
-    /// The current count of non-null values.
-    count: i64,
+pub struct SumAccumulator {
+    sum: Option<i64>,
 }
 
-impl CountAccumulator {
+impl SumAccumulator {
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl Accumulator for CountAccumulator {
+impl Accumulator for SumAccumulator {
     fn state(&mut self) -> Result<Vec<ScalarValue>> {
         Ok(vec![self.eval()?])
     }
 
     fn eval(&mut self) -> Result<ScalarValue> {
-        Ok(ScalarValue::Int64(Some(self.count)))
+        Ok(ScalarValue::Int64(self.sum))
     }
 
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
-        let array = &values[0];
-        let null_count = array.logical_nulls().map_or(0, |x| x.null_count());
-        self.count += (array.len() - null_count) as i64;
+        let array = &values[0]
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .ok_or_else(|| Error::Arrow {
+                message: "Failed to downcast array".to_string(),
+                location: location!(),
+            })?;
+        if let Some(delta) = compute::sum(array) {
+            let s = self.sum.get_or_insert(0);
+            *s = s.add_checked(delta)?;
+        }
         Ok(())
     }
 }
@@ -97,23 +101,24 @@ mod tests {
 
     use crate::{
         expression::{
-            physical::{aggregate::AggregateExpr, column::ColumnExpr},
+            physical::{
+                aggregate::{sum::SumExpr, AggregateExpr},
+                column::ColumnExpr,
+            },
             values::ScalarValue,
         },
         tests::create_record_batch,
     };
 
-    use super::CountExpr;
-
     #[test]
-    fn test_count_accumulator() {
-        let expr = CountExpr::new(Arc::new(ColumnExpr::new("a", 0)));
+    fn test_sum_accumulator() {
+        let expr = SumExpr::new(vec![Arc::new(ColumnExpr::new("a", 0))]);
         let batch = create_record_batch();
         let mut accum = expr.create_accumulator().unwrap();
 
-        accum.update_batch(batch.columns()).unwrap();
+        accum.update_batch(&[batch.column(1).clone()]).unwrap();
         let result = accum.eval().unwrap();
-        let expected = ScalarValue::Int64(Some(2));
+        let expected = ScalarValue::Int64(Some(3));
 
         assert_eq!(result, expected);
     }
