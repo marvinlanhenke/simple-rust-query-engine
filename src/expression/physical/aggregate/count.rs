@@ -92,4 +92,29 @@ impl Accumulator for CountAccumulator {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use std::sync::Arc;
+
+    use crate::{
+        expression::{
+            physical::{aggregate::AggregateExpr, column::ColumnExpr},
+            values::ScalarValue,
+        },
+        tests::create_record_batch,
+    };
+
+    use super::CountExpr;
+
+    #[test]
+    fn test_count_accumulator() {
+        let expr = CountExpr::new(Arc::new(ColumnExpr::new("a", 0)));
+        let batch = create_record_batch();
+        let mut accum = expr.create_accumulator().unwrap();
+
+        accum.update_batch(batch.columns()).unwrap();
+        let result = accum.eval().unwrap();
+        let expected = ScalarValue::Int64(Some(2));
+
+        assert_eq!(result, expected);
+    }
+}
