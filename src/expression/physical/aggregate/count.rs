@@ -16,26 +16,18 @@ use super::{Accumulator, AggregateExpr};
 #[derive(Debug)]
 pub struct CountExpr {
     /// The input expressions used by the accumulator.
-    expressions: Vec<Arc<dyn PhysicalExpression>>,
+    expression: Arc<dyn PhysicalExpression>,
 }
 
 impl CountExpr {
     /// Creates a new [`CountExpr`] instance.
     pub fn new(expression: Arc<dyn PhysicalExpression>) -> Self {
-        Self {
-            expressions: vec![expression],
-        }
+        Self { expression }
     }
 
     /// Returns the function's name including it's expressions.
     pub fn name(&self) -> String {
-        let expr_str = self
-            .expressions
-            .iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("COUNT({})", expr_str)
+        format!("COUNT({})", self.expression)
     }
 }
 
@@ -53,7 +45,7 @@ impl AggregateExpr for CountExpr {
     }
 
     fn expressions(&self) -> Vec<Arc<dyn PhysicalExpression>> {
-        self.expressions.clone()
+        vec![self.expression.clone()]
     }
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
