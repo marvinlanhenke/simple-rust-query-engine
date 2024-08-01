@@ -2,8 +2,8 @@ use std::{any::Any, fmt::Display, sync::Arc};
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
 use futures::StreamExt;
-use hash::GroupedHashAggregateStream;
 use no_groups::AggregateStream;
+use row_hash::GroupedHashAggregateStream;
 
 use crate::{
     error::Result,
@@ -14,8 +14,8 @@ use crate::{
 use super::plan::{format_exec, ExecutionPlan};
 
 pub mod group_values;
-pub mod hash;
 pub mod no_groups;
+pub mod row_hash;
 
 enum StreamType {
     AggregateStream(AggregateStream),
