@@ -5,6 +5,7 @@ pub mod execution;
 pub mod expression;
 pub mod io;
 pub mod plan;
+pub mod utils;
 
 #[cfg(test)]
 mod tests {
