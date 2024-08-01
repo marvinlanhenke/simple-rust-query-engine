@@ -34,4 +34,14 @@ mod tests {
 
         RecordBatch::try_new(schema, vec![utf_arr, int_arr1, int_arr2]).unwrap()
     }
+
+    /// A helper function to generate a sample [`RecordBatch`].
+    pub fn create_record_batch_with_nulls() -> RecordBatch {
+        let schema = Arc::new(create_schema());
+        let utf_arr = Arc::new(StringArray::from(vec![Some("hello"), None, Some("world")]));
+        let int_arr1 = Arc::new(Int64Array::from(vec![Some(1), Some(2), None]));
+        let int_arr2 = Arc::new(Int64Array::from(vec![None, Some(11), Some(22)]));
+
+        RecordBatch::try_new(schema, vec![utf_arr, int_arr1, int_arr2]).unwrap()
+    }
 }

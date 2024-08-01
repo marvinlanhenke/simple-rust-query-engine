@@ -1,8 +1,8 @@
 use std::{any::Any, sync::Arc};
 
 use arrow::{
-    array::ArrayRef,
-    datatypes::{DataType, Field},
+    array::{ArrayRef, PrimitiveArray},
+    datatypes::{DataType, Field, Int64Type},
 };
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
     expression::{physical::expr::PhysicalExpression, values::ScalarValue},
 };
 
-use super::{Accumulator, AggregateExpr};
+use super::{Accumulator, AggregateExpr, GroupAccumulator};
 
 /// Represents a count aggregate expression.
 #[derive(Debug)]
@@ -51,6 +51,14 @@ impl AggregateExpr for CountExpr {
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
         Ok(Box::new(CountAccumulator::new()))
     }
+
+    fn group_accumulator_supported(&self) -> bool {
+        true
+    }
+
+    fn create_group_accumulator(&self) -> Result<Box<dyn GroupAccumulator>> {
+        Ok(Box::new(CountGroupAccumulator::new()))
+    }
 }
 
 /// Represents the accumulator for the count expression.
@@ -83,6 +91,56 @@ impl Accumulator for CountAccumulator {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct CountGroupAccumulator {
+    /// The current count per group.
+    counts: Vec<i64>,
+}
+
+impl CountGroupAccumulator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl GroupAccumulator for CountGroupAccumulator {
+    fn state(&mut self) -> Result<Vec<ArrayRef>> {
+        Ok(vec![self.eval()?])
+    }
+
+    fn eval(&mut self) -> Result<ArrayRef> {
+        let counts = self.counts.clone();
+        let array = PrimitiveArray::<Int64Type>::new(counts.into(), None);
+        Ok(Arc::new(array))
+    }
+
+    fn update_batch(
+        &mut self,
+        values: &[ArrayRef],
+        group_indices: &[usize],
+        total_num_groups: usize,
+    ) -> Result<()> {
+        self.counts.resize(total_num_groups, 0);
+        let array = &values[0];
+
+        match array.logical_nulls() {
+            Some(nb) => {
+                for (idx, is_valid) in group_indices.iter().zip(nb.iter()) {
+                    if is_valid {
+                        self.counts[*idx] += 1
+                    }
+                }
+            }
+            None => {
+                for idx in group_indices {
+                    self.counts[*idx] += 1;
+                }
+            }
+        };
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -92,15 +150,34 @@ mod tests {
             physical::{aggregate::AggregateExpr, column::ColumnExpr},
             values::ScalarValue,
         },
-        tests::create_record_batch,
+        tests::create_record_batch_with_nulls,
     };
 
     use super::CountExpr;
 
     #[test]
+    fn test_count_group_accumulator() {
+        let expr = CountExpr::new(Arc::new(ColumnExpr::new("c1", 0)));
+        let batch = create_record_batch_with_nulls();
+        let mut accum = expr.create_group_accumulator().unwrap();
+
+        let values = batch.columns();
+        let group_indices = &[0, 0, 1];
+        let total_num_groups = 2;
+        accum
+            .update_batch(values, group_indices, total_num_groups)
+            .unwrap();
+
+        let result = accum.eval().unwrap();
+        let expected = &[1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.to_data().buffers()[0].as_slice(), expected);
+    }
+
+    #[test]
     fn test_count_accumulator() {
-        let expr = CountExpr::new(Arc::new(ColumnExpr::new("a", 0)));
-        let batch = create_record_batch();
+        let expr = CountExpr::new(Arc::new(ColumnExpr::new("c1", 0)));
+        let batch = create_record_batch_with_nulls();
         let mut accum = expr.create_accumulator().unwrap();
 
         accum.update_batch(batch.columns()).unwrap();
