@@ -13,6 +13,7 @@ use crate::{
 
 use super::plan::{format_exec, ExecutionPlan};
 
+pub mod group_values;
 pub mod hash;
 pub mod no_groups;
 
@@ -110,7 +111,7 @@ impl ExecutionPlan for AggregateExec {
                 self.aggregate_expressions.as_slice(),
             )?)
         } else {
-            StreamType::GroupedHash(GroupedHashAggregateStream {})
+            todo!()
         };
 
         Ok(stream.into())
