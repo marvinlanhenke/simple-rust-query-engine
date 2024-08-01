@@ -15,7 +15,7 @@ use crate::{
     expression::{physical::expr::PhysicalExpression, values::ScalarValue},
 };
 
-use super::{Accumulator, AggregateExpr};
+use super::{Accumulator, AggregateExpr, GroupAccumulator};
 
 /// Represents an avg aggregate expression.
 #[derive(Debug)]
@@ -90,6 +90,14 @@ impl AggregateExpr for AvgExpr {
                 location: location!(),
             }),
         }
+    }
+
+    fn group_accumulator_supported(&self) -> bool {
+        true
+    }
+
+    fn create_group_accumulator(&self) -> Result<Box<dyn GroupAccumulator>> {
+        todo!()
     }
 }
 

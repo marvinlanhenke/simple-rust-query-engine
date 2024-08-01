@@ -15,7 +15,7 @@ use crate::{
     expression::{physical::expr::PhysicalExpression, values::ScalarValue},
 };
 
-use super::{Accumulator, AggregateExpr};
+use super::{Accumulator, AggregateExpr, GroupAccumulator};
 
 /// Represents a max aggregate expression.
 #[derive(Debug)]
@@ -80,6 +80,14 @@ impl AggregateExpr for MaxExpr {
                 location: location!(),
             }),
         }
+    }
+
+    fn group_accumulator_supported(&self) -> bool {
+        true
+    }
+
+    fn create_group_accumulator(&self) -> Result<Box<dyn GroupAccumulator>> {
+        todo!()
     }
 }
 
@@ -191,6 +199,14 @@ impl AggregateExpr for MinExpr {
                 location: location!(),
             }),
         }
+    }
+
+    fn group_accumulator_supported(&self) -> bool {
+        true
+    }
+
+    fn create_group_accumulator(&self) -> Result<Box<dyn GroupAccumulator>> {
+        todo!()
     }
 }
 

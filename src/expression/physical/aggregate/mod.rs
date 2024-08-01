@@ -34,7 +34,12 @@ pub trait GroupAccumulator: Send + Sync + Debug {
     fn eval(&mut self) -> Result<ArrayRef>;
 
     /// Updates the accumulator's state from its input, which belongs to a list of group indices.
-    fn update_batch(&mut self, values: &[ArrayRef], group_indices: &[usize]) -> Result<()>;
+    fn update_batch(
+        &mut self,
+        values: &[ArrayRef],
+        group_indices: &[usize],
+        total_num_groups: usize,
+    ) -> Result<()>;
 }
 
 /// A trait that represents an [`AggregateExpr`].
@@ -47,6 +52,14 @@ pub trait AggregateExpr: Send + Sync + Debug {
 
     /// The accumulator used to accumulate values from the expression.
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>>;
+
+    /// Indicates if an accumulator with groupings is supported.
+    fn group_accumulator_supported(&self) -> bool {
+        false
+    }
+
+    /// The accumulator used to accumulate values from the expression with groupings.
+    fn create_group_accumulator(&self) -> Result<Box<dyn GroupAccumulator>>;
 
     /// The accumulator's state fields.
     fn state_fields(&self) -> Result<Vec<Field>>;
