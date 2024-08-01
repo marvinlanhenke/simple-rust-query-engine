@@ -24,6 +24,19 @@ pub trait Accumulator: Send + Sync + Debug {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()>;
 }
 
+/// Tracks an aggregate function's state with groupings.
+pub trait GroupAccumulator: Send + Sync + Debug {
+    /// Returns the intermediate state of the accumulator,
+    /// consuming the intermediate state.
+    fn state(&mut self) -> Result<Vec<ArrayRef>>;
+
+    /// Returns the final aggregate value.
+    fn eval(&mut self) -> Result<ArrayRef>;
+
+    /// Updates the accumulator's state from its input, which belongs to a list of group indices.
+    fn update_batch(&mut self, values: &[ArrayRef], group_indices: &[usize]) -> Result<()>;
+}
+
 /// A trait that represents an [`AggregateExpr`].
 pub trait AggregateExpr: Send + Sync + Debug {
     /// Returns the aggregate expression as [`Any`].
