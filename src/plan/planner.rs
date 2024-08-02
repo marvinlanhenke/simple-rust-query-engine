@@ -76,8 +76,24 @@ impl Planner {
             Aggregate(plan) => {
                 let physical_input = Self::create_physical_plan(plan.input())?;
 
-                // not supported yet
-                let group_by = vec![];
+                let mut group_by = Vec::with_capacity(plan.group_by().len());
+                for expr in plan.group_by().iter() {
+                    let phys_expr = Self::create_physical_expression(input, expr)?;
+                    let name = phys_expr
+                        .as_any()
+                        .downcast_ref::<ColumnExpr>()
+                        .ok_or_else(|| Error::InvalidOperation {
+                            message: format!(
+                                "Failed to downcast physical expression '{}' to ColumnExpr",
+                                phys_expr
+                            ),
+                            location: location!(),
+                        })?
+                        .name()
+                        .to_string();
+                    group_by.push((phys_expr, name))
+                }
+
                 let aggregate_expressions = Self::create_aggregate_expression(plan)?;
 
                 Ok(Arc::new(AggregateExec::try_new(

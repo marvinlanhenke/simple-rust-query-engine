@@ -95,6 +95,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_aggregate_with_groupings() {
+        let ctx = SessionContext::new();
+
+        let group_by = vec![col("c1")];
+        let aggregate_expressions = vec![count(col("c2"))];
+
+        let df = ctx
+            .read_csv("testdata/csv/simple_aggregate.csv", CsvReadOptions::new())
+            .unwrap()
+            .aggregate(group_by, aggregate_expressions)
+            .unwrap();
+
+        let expected = vec![
+            "+----+-----------+",
+            "| c1 | COUNT(c2) |",
+            "+----+-----------+",
+            "| a  | 2         |",
+            "| c  | 2         |",
+            "| d  | 1         |",
+            "| f  | 1         |",
+            "| b  | 1         |",
+            "+----+-----------+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_aggregate_no_groupings() {
         let ctx = SessionContext::new();
 
@@ -114,8 +141,6 @@ mod tests {
             .unwrap()
             .aggregate(group_by, aggregate_expressions)
             .unwrap();
-
-        df.show().await.unwrap();
 
         let expected = vec![
             "+-----------+---------+---------+---------+---------+",
