@@ -17,6 +17,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct GroupValues {
+    /// The grouping schema.
     schema: SchemaRef,
     row_converter: RowConverter,
     map: HashMap<u64, usize>,
@@ -47,6 +48,32 @@ impl GroupValues {
 
     pub fn schema(&self) -> SchemaRef {
         self.schema.clone()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.group_values
+            .as_ref()
+            .map(|r| r.num_rows())
+            .unwrap_or(0)
+    }
+
+    pub fn emit(&mut self) -> Result<Vec<ArrayRef>> {
+        let mut group_values = self
+            .group_values
+            .take()
+            .ok_or_else(|| Error::InvalidOperation {
+                message: "Cannot emit from empty rows".to_string(),
+                location: location!(),
+            })?;
+        let output = self.row_converter.convert_rows(&group_values)?;
+        group_values.clear();
+        self.group_values = Some(group_values);
+
+        Ok(output)
     }
 
     pub fn intern(&mut self, cols: &[ArrayRef], groups: &mut Vec<usize>) -> Result<()> {

@@ -111,7 +111,12 @@ impl ExecutionPlan for AggregateExec {
                 self.aggregate_expressions.as_slice(),
             )?)
         } else {
-            todo!()
+            StreamType::GroupedHash(GroupedHashAggregateStream::try_new(
+                input,
+                self.schema(),
+                self.group_by.clone(),
+                self.aggregate_expressions.as_slice(),
+            )?)
         };
 
         Ok(stream.into())
@@ -138,11 +143,31 @@ mod tests {
     use futures::StreamExt;
 
     use crate::{
-        expression::physical::{aggregate::count::CountExpr, column::ColumnExpr},
+        expression::physical::{
+            aggregate::count::CountExpr, column::ColumnExpr, expr::PhysicalExpression,
+        },
         io::reader::csv::options::CsvFileOpenerConfig,
         plan::physical::{aggregate::AggregateExec, plan::ExecutionPlan, scan::csv::CsvExec},
         tests::create_schema,
     };
+
+    #[tokio::test]
+    async fn test_aggregate_count_with_grouping() {
+        let schema = Arc::new(create_schema());
+        let config = CsvFileOpenerConfig::new(schema.clone());
+        let input = Arc::new(CsvExec::new("testdata/csv/simple.csv", config));
+        let group_by: (Arc<dyn PhysicalExpression>, String) =
+            (Arc::new(ColumnExpr::new("c1", 0)), "c1".to_string());
+        let agg_exprs = Arc::new(CountExpr::new(Arc::new(ColumnExpr::new("c2", 1))));
+        let exec = AggregateExec::try_new(input, vec![group_by], vec![agg_exprs]).unwrap();
+
+        let mut stream = exec.execute().unwrap();
+
+        while let Some(Ok(batch)) = stream.next().await {
+            assert_eq!(batch.num_rows(), 6);
+            assert_eq!(batch.num_columns(), 2);
+        }
+    }
 
     #[tokio::test]
     async fn test_aggregate_count() {
