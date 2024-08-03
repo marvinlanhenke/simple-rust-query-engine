@@ -15,18 +15,32 @@ use crate::{
     utils::HashValue,
 };
 
+/// Manages the aggregation of group values within a dataset using a defined grouping schema.
+///
+/// This struct utilizes the `arrow::RowConverter` to transform an array into a row format, which is then hashed.
+/// The resulting hash serves as a key in a hashmap where each key is associated with a unique group index.
+/// Upon processing a new array, it either assigns a new group index for previously unseen values or
+/// retrieves an existing index from the hashmap. These indices are stored in the provided `Vec<usize>`
+/// (current_group_indices) to track the groups of each entry in the dataset.
 #[derive(Debug)]
 pub struct GroupValues {
     /// The grouping schema.
     schema: SchemaRef,
+    /// Converts arrow arrays into row format.
     row_converter: RowConverter,
+    /// Maps a hashed row to indices in the `group values` array.
     map: HashMap<u64, usize>,
+    /// Optional storage of grouped rows.
     group_values: Option<Rows>,
+    /// `RandomState` used for generating consistent hash values.
     random_state: RandomState,
+    /// An internal buffer to store computed hash values
+    /// for the current batch of rows.
     hashes_buffer: Vec<u64>,
 }
 
 impl GroupValues {
+    /// Attempts to create a new [`GroupValues] instance.
     pub fn try_new(schema: SchemaRef) -> Result<Self> {
         let row_converter = RowConverter::new(
             schema
@@ -46,14 +60,17 @@ impl GroupValues {
         })
     }
 
+    /// Retrieves a reference-counted `grouping schema`.
     pub fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
+    /// Checks if the group values are present and not empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Returns the number of unique group entries stored.
     pub fn len(&self) -> usize {
         self.group_values
             .as_ref()
@@ -61,6 +78,8 @@ impl GroupValues {
             .unwrap_or(0)
     }
 
+    /// Emits the aggregated group values as an array of `ArrayRef`,
+    /// resetting the state for new aggregations.
     pub fn emit(&mut self) -> Result<Vec<ArrayRef>> {
         let mut group_values = self
             .group_values
@@ -76,6 +95,8 @@ impl GroupValues {
         Ok(output)
     }
 
+    /// Processes and interns group values from the provided columns,
+    /// updating internal state and group indices.
     pub fn intern(&mut self, cols: &[ArrayRef], groups: &mut Vec<usize>) -> Result<()> {
         groups.clear();
 
@@ -105,6 +126,8 @@ impl GroupValues {
         Ok(())
     }
 
+    /// Generates hashes for each row based on the provided columns,
+    /// supporting various data types.
     fn create_hashes(&mut self, cols: &[ArrayRef], num_rows: usize) -> Result<()> {
         self.hashes_buffer.clear();
         self.hashes_buffer.resize(num_rows, 0);
@@ -137,6 +160,7 @@ impl GroupValues {
         Ok(())
     }
 
+    /// Hashes non-null values of an array, updating the hash buffer.
     fn hash_array<T>(&mut self, array: T)
     where
         T: ArrayAccessor,
@@ -150,6 +174,7 @@ impl GroupValues {
         }
     }
 
+    /// Specifically hashes values in a primitive array, considering nullability.
     fn hash_primitive_array<T>(&mut self, array: &PrimitiveArray<T>)
     where
         T: ArrowPrimitiveType,

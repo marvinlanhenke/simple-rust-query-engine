@@ -16,18 +16,32 @@ use crate::{
 
 use super::group_values::GroupValues;
 
+/// Processes batches of records by grouping and
+/// aggregating them according to specified expressions.
 struct GroupedHashAggregateStreamInner {
+    /// The input stream of `RecordBatch` items.
     input: RecordBatchStream,
+    /// A reference-counted schema after the aggregation.
     schema: SchemaRef,
+    /// Group by expressions including the alias.
     group_by: Vec<(Arc<dyn PhysicalExpression>, String)>,
+    /// Manages the aggregation of group values within a `RecordBatch`.
     group_values: GroupValues,
+    /// Keeps track of the occurences of each group value index.
     current_group_indices: Vec<usize>,
+    /// Aggregate expressions used by the corresponding group accumulator.
     aggregate_expressions: Vec<Vec<Arc<dyn PhysicalExpression>>>,
+    /// Accumulators responsible for the aggregation logic per group.
     accumulators: Vec<Box<dyn GroupAccumulator>>,
+    /// Indicates whether the stream has finished processing.
     finished: bool,
 }
 
 impl GroupedHashAggregateStreamInner {
+    /// Processes a single `RecordBatch` to evaluate grouping and aggregate expressions.
+    ///
+    /// This method evaluates the group-by and aggregation expressions, updates the group indices,
+    /// and advances the state of accumulators based on the results.
     fn group_aggregate_batch(&mut self, batch: &RecordBatch) -> Result<()> {
         let group_by_values = self
             .group_by
@@ -65,6 +79,7 @@ impl GroupedHashAggregateStreamInner {
             })
     }
 
+    /// Finalizes the aggregation process, compiling the results into a list of arrays.
     fn finalize_aggregation(&mut self) -> Result<Vec<ArrayRef>> {
         let mut output = self.group_values.emit()?;
 
@@ -76,11 +91,20 @@ impl GroupedHashAggregateStreamInner {
     }
 }
 
+/// A stream that aggregates records based
+/// on grouping and aggregation expressions.
 pub struct GroupedHashAggregateStream {
     inner: RecordBatchStream,
 }
 
 impl GroupedHashAggregateStream {
+    /// Attempts to create a new [`GroupedHashAggregateStream`].
+    ///
+    /// Initializes the inner stream and its components to aggregate `RecordBatch` data
+    /// based on predefined grouping and aggregation rules.
+    /// The internal [`GroupedHashAggregateStreamInner`] continuously polls its source stream,
+    /// processing incoming `RecordBatch`es until none remain. Final aggregation results are compiled
+    /// and emitted only after all batches have been processed.
     pub fn try_new(
         input: RecordBatchStream,
         schema: SchemaRef,
@@ -129,6 +153,7 @@ impl GroupedHashAggregateStream {
         Ok(Self { inner: stream })
     }
 
+    /// Retrieves the grouping schema based on the number of groups.
     fn group_schema(schema: &Schema, group_count: usize) -> SchemaRef {
         let group_fields = schema.fields()[0..group_count].to_vec();
         Arc::new(Schema::new(group_fields))

@@ -91,13 +91,32 @@ impl Accumulator for CountAccumulator {
     }
 }
 
+/// Represents a count aggregate expression with associated groupings.
+///
+/// This accumulator tracks the frequency of each index within the group indices of a [`RecordBatch`].
+/// Each index represents a distinct entry, managed by [`GroupValue`], which hashes (key) each grouping row
+/// and stores it in a `HashMap` with a unique identifier (value). The occurence of each unique entry is recorded
+/// to construct the `group_indices` vector for the current batch. For each group index, the accumulator
+/// increments the associated count by one, provided the index is not null.
+///
+/// # Example
+///
+///   ┌─────┐                    ┌───────────┐
+///   │ A:0 │    ┌─┬─┬─┬─┬───┐   │  counts   │
+///   ├─────┤    │0│0│0│1│...│   │ ┌───┬───┐ │
+///   ├─────┤    └─┴─┴─┴─┴───┘   │ │ 3 │ 1 │ │
+///   │ B:1 │    group indices   │ └───┴───┘ │
+///   └─────┘                    │Accumulator│
+/// group values                 └───────────┘
+///
 #[derive(Debug, Default)]
 pub struct CountGroupAccumulator {
-    /// The current count per group.
+    /// The current count per group index.
     counts: Vec<i64>,
 }
 
 impl CountGroupAccumulator {
+    /// Creates a new [`CountGroupAccumulator`] instance.
     pub fn new() -> Self {
         Self::default()
     }
@@ -123,6 +142,8 @@ impl GroupAccumulator for CountGroupAccumulator {
         self.counts.resize(total_num_groups, 0);
         let array = &values[0];
 
+        // increase the count by one for each group index
+        // provided the batch value at this index is not null
         match array.logical_nulls() {
             Some(nb) => {
                 for (idx, is_valid) in group_indices.iter().zip(nb.iter()) {
