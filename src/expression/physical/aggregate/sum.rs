@@ -8,6 +8,7 @@ use arrow::{
         Int64Type, UInt16Type, UInt32Type, UInt64Type,
     },
 };
+use arrow_array::PrimitiveArray;
 use snafu::location;
 
 use crate::{
@@ -43,8 +44,8 @@ impl SumExpr {
 
 /// Creates an type specific accumulator.
 macro_rules! make_accumulator {
-    ($t:ty, $dt:expr) => {
-        Ok(Box::new(SumAccumulator::<$t>::new($dt.clone())))
+    ($accu:ident, $t:ty, $dt:expr) => {
+        Ok(Box::new($accu::<$t>::new($dt.clone())))
     };
 }
 
@@ -67,14 +68,14 @@ impl AggregateExpr for SumExpr {
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
         match self.data_type {
-            DataType::Int16 => make_accumulator!(Int16Type, self.data_type),
-            DataType::Int32 => make_accumulator!(Int32Type, self.data_type),
-            DataType::Int64 => make_accumulator!(Int64Type, self.data_type),
-            DataType::UInt16 => make_accumulator!(UInt16Type, self.data_type),
-            DataType::UInt32 => make_accumulator!(UInt32Type, self.data_type),
-            DataType::UInt64 => make_accumulator!(UInt64Type, self.data_type),
-            DataType::Float32 => make_accumulator!(Float32Type, self.data_type),
-            DataType::Float64 => make_accumulator!(Float64Type, self.data_type),
+            DataType::Int16 => make_accumulator!(SumAccumulator, Int16Type, self.data_type),
+            DataType::Int32 => make_accumulator!(SumAccumulator, Int32Type, self.data_type),
+            DataType::Int64 => make_accumulator!(SumAccumulator, Int64Type, self.data_type),
+            DataType::UInt16 => make_accumulator!(SumAccumulator, UInt16Type, self.data_type),
+            DataType::UInt32 => make_accumulator!(SumAccumulator, UInt32Type, self.data_type),
+            DataType::UInt64 => make_accumulator!(SumAccumulator, UInt64Type, self.data_type),
+            DataType::Float32 => make_accumulator!(SumAccumulator, Float32Type, self.data_type),
+            DataType::Float64 => make_accumulator!(SumAccumulator, Float64Type, self.data_type),
             _ => Err(Error::InvalidOperation {
                 message: format!("Sum not supported for datatype {}", self.data_type),
                 location: location!(),
@@ -87,7 +88,24 @@ impl AggregateExpr for SumExpr {
     }
 
     fn create_group_accumulator(&self) -> Result<Box<dyn GroupAccumulator>> {
-        todo!()
+        match self.data_type {
+            DataType::Int16 => make_accumulator!(SumGroupAccumulator, Int16Type, self.data_type),
+            DataType::Int32 => make_accumulator!(SumGroupAccumulator, Int32Type, self.data_type),
+            DataType::Int64 => make_accumulator!(SumGroupAccumulator, Int64Type, self.data_type),
+            DataType::UInt16 => make_accumulator!(SumGroupAccumulator, UInt16Type, self.data_type),
+            DataType::UInt32 => make_accumulator!(SumGroupAccumulator, UInt32Type, self.data_type),
+            DataType::UInt64 => make_accumulator!(SumGroupAccumulator, UInt64Type, self.data_type),
+            DataType::Float32 => {
+                make_accumulator!(SumGroupAccumulator, Float32Type, self.data_type)
+            }
+            DataType::Float64 => {
+                make_accumulator!(SumGroupAccumulator, Float64Type, self.data_type)
+            }
+            _ => Err(Error::InvalidOperation {
+                message: format!("Sum not supported for datatype {}", self.data_type),
+                location: location!(),
+            }),
+        }
     }
 }
 
@@ -125,11 +143,70 @@ impl<T: ArrowNumericType> Accumulator for SumAccumulator<T> {
     }
 
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        assert_eq!(values.len(), 1, "single argument to update_batch");
+
         let array = values[0].as_primitive::<T>();
         if let Some(delta) = compute::sum(array) {
             let s = self.sum.get_or_insert(T::Native::usize_as(0));
             *s = s.add_wrapping(delta);
         }
+        Ok(())
+    }
+}
+
+pub struct SumGroupAccumulator<T: ArrowNumericType> {
+    sums: Vec<T::Native>,
+    starting_value: T::Native,
+    data_type: DataType,
+}
+
+impl<T: ArrowNumericType> Debug for SumGroupAccumulator<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SumGroupAccumulator({})", self.data_type)
+    }
+}
+
+impl<T: ArrowNumericType> SumGroupAccumulator<T> {
+    /// Create a new [`SumGroupAccumulator`] instance.
+    pub fn new(data_type: DataType) -> Self {
+        Self {
+            sums: vec![],
+            starting_value: Default::default(),
+            data_type,
+        }
+    }
+}
+
+impl<T: ArrowNumericType> GroupAccumulator for SumGroupAccumulator<T> {
+    fn state(&mut self) -> Result<Vec<ArrayRef>> {
+        Ok(vec![self.eval()?])
+    }
+
+    fn eval(&mut self) -> Result<ArrayRef> {
+        let sums = self.sums.clone();
+        let array =
+            PrimitiveArray::<T>::new(sums.into(), None).with_data_type(self.data_type.clone());
+        Ok(Arc::new(array))
+    }
+
+    fn update_batch(
+        &mut self,
+        values: &[ArrayRef],
+        group_indices: &[usize],
+        total_num_groups: usize,
+    ) -> Result<()> {
+        assert_eq!(values.len(), 1, "single argument to update_batch");
+
+        let array = values[0].as_primitive::<T>();
+
+        self.sums.resize(total_num_groups, self.starting_value);
+
+        for (idx, value) in group_indices.iter().zip(array.iter()) {
+            if let Some(v) = value {
+                self.sums[*idx] = self.sums[*idx].add_wrapping(v);
+            }
+        }
+
         Ok(())
     }
 }
@@ -148,8 +225,25 @@ mod tests {
             },
             values::ScalarValue,
         },
-        tests::create_record_batch,
+        tests::{create_record_batch, create_record_batch_with_nulls},
     };
+
+    #[test]
+    fn test_sum_group_accumulator() {
+        let expr = SumExpr::new(Arc::new(ColumnExpr::new("c2", 1)), DataType::Int64);
+        let batch = create_record_batch_with_nulls();
+        let mut accum = expr.create_group_accumulator().unwrap();
+
+        let values = &[batch.column(1).clone()];
+        let group_indices = &[0, 1, 0];
+        let total_num_groups = 2;
+        accum
+            .update_batch(values, group_indices, total_num_groups)
+            .unwrap();
+        let result = accum.eval().unwrap();
+        let expected = &[1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(result.to_data().buffers()[0].as_slice(), expected);
+    }
 
     #[test]
     fn test_sum_accumulator() {
