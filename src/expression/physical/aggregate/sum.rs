@@ -154,9 +154,13 @@ impl<T: ArrowNumericType> Accumulator for SumAccumulator<T> {
     }
 }
 
+/// Represents a sum aggregate expression with associated groupings.
 pub struct SumGroupAccumulator<T: ArrowNumericType> {
+    /// The current sum per group index.
     sums: Vec<T::Native>,
+    /// The starting value for a new group.
     starting_value: T::Native,
+    /// The input datatype.
     data_type: DataType,
 }
 
