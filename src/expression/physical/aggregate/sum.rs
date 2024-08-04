@@ -171,7 +171,7 @@ impl<T: ArrowNumericType> Debug for SumGroupAccumulator<T> {
 }
 
 impl<T: ArrowNumericType> SumGroupAccumulator<T> {
-    /// Create a new [`SumGroupAccumulator`] instance.
+    /// Creates a new [`SumGroupAccumulator`] instance.
     pub fn new(data_type: DataType) -> Self {
         Self {
             sums: vec![],
