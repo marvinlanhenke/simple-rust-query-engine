@@ -88,6 +88,13 @@ impl AggregateExpr for SumExpr {
     }
 
     fn create_group_accumulator(&self) -> Result<Box<dyn GroupAccumulator>> {
+        if !self.group_accumulator_supported() {
+            return Err(Error::InvalidOperation {
+                message: "GroupAccumulator is not supported".to_string(),
+                location: location!(),
+            });
+        }
+
         match self.data_type {
             DataType::Int16 => make_accumulator!(SumGroupAccumulator, Int16Type, self.data_type),
             DataType::Int32 => make_accumulator!(SumGroupAccumulator, Int32Type, self.data_type),
