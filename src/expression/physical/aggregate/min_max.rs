@@ -1,4 +1,4 @@
-use std::{any::Any, fmt::Debug, sync::Arc};
+use std::{any::Any, collections::HashSet, fmt::Debug, sync::Arc};
 
 use arrow::{
     array::{ArrayRef, ArrowNativeTypeOp, ArrowNumericType, AsArray},
@@ -8,6 +8,7 @@ use arrow::{
         Int64Type, UInt16Type, UInt32Type, UInt64Type,
     },
 };
+use arrow_array::PrimitiveArray;
 use snafu::location;
 
 use crate::{
@@ -41,10 +42,10 @@ impl MaxExpr {
     }
 }
 
-/// Creates an type specific max accumulator.
-macro_rules! make_max_accumulator {
-    ($t:ty, $dt:expr) => {
-        Ok(Box::new(MaxAccumulator::<$t>::try_new($dt.clone())?))
+/// Creates an type specific accumulator.
+macro_rules! make_accumulator {
+    ($accu:ident, $t:ty, $dt:expr) => {
+        Ok(Box::new($accu::<$t>::new($dt.clone())))
     };
 }
 
@@ -67,14 +68,14 @@ impl AggregateExpr for MaxExpr {
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
         match self.data_type {
-            DataType::Int16 => make_max_accumulator!(Int16Type, self.data_type),
-            DataType::Int32 => make_max_accumulator!(Int32Type, self.data_type),
-            DataType::Int64 => make_max_accumulator!(Int64Type, self.data_type),
-            DataType::UInt16 => make_max_accumulator!(UInt16Type, self.data_type),
-            DataType::UInt32 => make_max_accumulator!(UInt32Type, self.data_type),
-            DataType::UInt64 => make_max_accumulator!(UInt64Type, self.data_type),
-            DataType::Float32 => make_max_accumulator!(Float32Type, self.data_type),
-            DataType::Float64 => make_max_accumulator!(Float64Type, self.data_type),
+            DataType::Int16 => make_accumulator!(MaxAccumulator, Int16Type, self.data_type),
+            DataType::Int32 => make_accumulator!(MaxAccumulator, Int32Type, self.data_type),
+            DataType::Int64 => make_accumulator!(MaxAccumulator, Int64Type, self.data_type),
+            DataType::UInt16 => make_accumulator!(MaxAccumulator, UInt16Type, self.data_type),
+            DataType::UInt32 => make_accumulator!(MaxAccumulator, UInt32Type, self.data_type),
+            DataType::UInt64 => make_accumulator!(MaxAccumulator, UInt64Type, self.data_type),
+            DataType::Float32 => make_accumulator!(MaxAccumulator, Float32Type, self.data_type),
+            DataType::Float64 => make_accumulator!(MaxAccumulator, Float64Type, self.data_type),
             _ => Err(Error::InvalidOperation {
                 message: format!("Sum not supported for datatype {}", self.data_type),
                 location: location!(),
@@ -87,7 +88,43 @@ impl AggregateExpr for MaxExpr {
     }
 
     fn create_group_accumulator(&self) -> Result<Box<dyn GroupAccumulator>> {
-        todo!()
+        if !self.group_accumulator_supported() {
+            return Err(Error::InvalidOperation {
+                message: "GroupAccumulator is not supported".to_string(),
+                location: location!(),
+            });
+        }
+
+        match self.data_type {
+            DataType::Int16 => {
+                make_accumulator!(MaxGroupAccumulator, Int16Type, self.data_type)
+            }
+            DataType::Int32 => {
+                make_accumulator!(MaxGroupAccumulator, Int32Type, self.data_type)
+            }
+            DataType::Int64 => {
+                make_accumulator!(MaxGroupAccumulator, Int64Type, self.data_type)
+            }
+            DataType::UInt16 => {
+                make_accumulator!(MaxGroupAccumulator, UInt16Type, self.data_type)
+            }
+            DataType::UInt32 => {
+                make_accumulator!(MaxGroupAccumulator, UInt32Type, self.data_type)
+            }
+            DataType::UInt64 => {
+                make_accumulator!(MaxGroupAccumulator, UInt64Type, self.data_type)
+            }
+            DataType::Float32 => {
+                make_accumulator!(MaxGroupAccumulator, Float32Type, self.data_type)
+            }
+            DataType::Float64 => {
+                make_accumulator!(MaxGroupAccumulator, Float64Type, self.data_type)
+            }
+            _ => Err(Error::InvalidOperation {
+                message: format!("Sum not supported for datatype {}", self.data_type),
+                location: location!(),
+            }),
+        }
     }
 }
 
@@ -106,12 +143,12 @@ impl<T: ArrowNumericType> Debug for MaxAccumulator<T> {
 }
 
 impl<T: ArrowNumericType> MaxAccumulator<T> {
-    /// Attempts to create a new [`MaxAccumulator`] instance.
-    pub fn try_new(data_type: DataType) -> Result<Self> {
-        Ok(Self {
+    /// Creates a new [`MaxAccumulator`] instance.
+    pub fn new(data_type: DataType) -> Self {
+        Self {
             max: None,
             data_type,
-        })
+        }
     }
 }
 
@@ -132,6 +169,71 @@ impl<T: ArrowNumericType> Accumulator for MaxAccumulator<T> {
                 *curr_max = new_max
             }
         }
+        Ok(())
+    }
+}
+
+/// Represents a max aggregate expression with associated groupings.
+pub struct MaxGroupAccumulator<T: ArrowNumericType> {
+    /// The current max values per group index.
+    maxes: Vec<T::Native>,
+    /// The starting value for a new group.
+    starting_value: T::Native,
+    /// The input datatype.
+    data_type: DataType,
+}
+
+impl<T: ArrowNumericType> Debug for MaxGroupAccumulator<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MaxGroupAccumulator({})", self.data_type)
+    }
+}
+
+impl<T: ArrowNumericType> MaxGroupAccumulator<T> {
+    pub fn new(data_type: DataType) -> Self {
+        Self {
+            maxes: vec![],
+            starting_value: Default::default(),
+            data_type,
+        }
+    }
+}
+
+impl<T: ArrowNumericType> GroupAccumulator for MaxGroupAccumulator<T> {
+    fn state(&mut self) -> Result<Vec<ArrayRef>> {
+        Ok(vec![self.eval()?])
+    }
+
+    fn eval(&mut self) -> Result<ArrayRef> {
+        let maxes = self.maxes.clone();
+        let array =
+            PrimitiveArray::<T>::new(maxes.into(), None).with_data_type(self.data_type.clone());
+        Ok(Arc::new(array))
+    }
+
+    fn update_batch(
+        &mut self,
+        values: &[ArrayRef],
+        group_indices: &[usize],
+        total_num_groups: usize,
+    ) -> Result<()> {
+        assert_eq!(values.len(), 1, "single argument to update_batch");
+
+        let array = values[0].as_primitive::<T>();
+
+        self.maxes.resize(total_num_groups, self.starting_value);
+
+        let mut seen_idx: HashSet<usize> = HashSet::new();
+        for (idx, value) in group_indices.iter().zip(array.iter()) {
+            if let Some(v) = value {
+                match seen_idx.insert(*idx) {
+                    true => self.maxes[*idx] = v,
+                    false if self.maxes[*idx] < v => self.maxes[*idx] = v,
+                    _ => continue,
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -160,13 +262,6 @@ impl MinExpr {
     }
 }
 
-/// Creates an type specific min accumulator.
-macro_rules! make_min_accumulator {
-    ($t:ty, $dt:expr) => {
-        Ok(Box::new(MinAccumulator::<$t>::try_new($dt.clone())?))
-    };
-}
-
 impl AggregateExpr for MinExpr {
     fn as_any(&self) -> &dyn Any {
         self
@@ -186,14 +281,30 @@ impl AggregateExpr for MinExpr {
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
         match self.data_type {
-            DataType::Int16 => make_min_accumulator!(Int16Type, self.data_type),
-            DataType::Int32 => make_min_accumulator!(Int32Type, self.data_type),
-            DataType::Int64 => make_min_accumulator!(Int64Type, self.data_type),
-            DataType::UInt16 => make_min_accumulator!(UInt16Type, self.data_type),
-            DataType::UInt32 => make_min_accumulator!(UInt32Type, self.data_type),
-            DataType::UInt64 => make_min_accumulator!(UInt64Type, self.data_type),
-            DataType::Float32 => make_min_accumulator!(Float32Type, self.data_type),
-            DataType::Float64 => make_min_accumulator!(Float64Type, self.data_type),
+            DataType::Int16 => {
+                make_accumulator!(MinAccumulator, Int16Type, self.data_type)
+            }
+            DataType::Int32 => {
+                make_accumulator!(MinAccumulator, Int32Type, self.data_type)
+            }
+            DataType::Int64 => {
+                make_accumulator!(MinAccumulator, Int64Type, self.data_type)
+            }
+            DataType::UInt16 => {
+                make_accumulator!(MinAccumulator, UInt16Type, self.data_type)
+            }
+            DataType::UInt32 => {
+                make_accumulator!(MinAccumulator, UInt32Type, self.data_type)
+            }
+            DataType::UInt64 => {
+                make_accumulator!(MinAccumulator, UInt64Type, self.data_type)
+            }
+            DataType::Float32 => {
+                make_accumulator!(MinAccumulator, Float32Type, self.data_type)
+            }
+            DataType::Float64 => {
+                make_accumulator!(MinAccumulator, Float64Type, self.data_type)
+            }
             _ => Err(Error::InvalidOperation {
                 message: format!("Sum not supported for datatype {}", self.data_type),
                 location: location!(),
@@ -206,7 +317,43 @@ impl AggregateExpr for MinExpr {
     }
 
     fn create_group_accumulator(&self) -> Result<Box<dyn GroupAccumulator>> {
-        todo!()
+        if !self.group_accumulator_supported() {
+            return Err(Error::InvalidOperation {
+                message: "GroupAccumulator is not supported".to_string(),
+                location: location!(),
+            });
+        }
+
+        match self.data_type {
+            DataType::Int16 => {
+                make_accumulator!(MinGroupAccumulator, Int16Type, self.data_type)
+            }
+            DataType::Int32 => {
+                make_accumulator!(MinGroupAccumulator, Int32Type, self.data_type)
+            }
+            DataType::Int64 => {
+                make_accumulator!(MinGroupAccumulator, Int64Type, self.data_type)
+            }
+            DataType::UInt16 => {
+                make_accumulator!(MinGroupAccumulator, UInt16Type, self.data_type)
+            }
+            DataType::UInt32 => {
+                make_accumulator!(MinGroupAccumulator, UInt32Type, self.data_type)
+            }
+            DataType::UInt64 => {
+                make_accumulator!(MinGroupAccumulator, UInt64Type, self.data_type)
+            }
+            DataType::Float32 => {
+                make_accumulator!(MinGroupAccumulator, Float32Type, self.data_type)
+            }
+            DataType::Float64 => {
+                make_accumulator!(MinGroupAccumulator, Float64Type, self.data_type)
+            }
+            _ => Err(Error::InvalidOperation {
+                message: format!("Sum not supported for datatype {}", self.data_type),
+                location: location!(),
+            }),
+        }
     }
 }
 
@@ -225,12 +372,12 @@ impl<T: ArrowNumericType> Debug for MinAccumulator<T> {
 }
 
 impl<T: ArrowNumericType> MinAccumulator<T> {
-    /// Attempts to create a new [`MinAccumulator`] instance.
-    pub fn try_new(data_type: DataType) -> Result<Self> {
-        Ok(Self {
+    /// Creates a new [`MinAccumulator`] instance.
+    pub fn new(data_type: DataType) -> Self {
+        Self {
             min: None,
             data_type,
-        })
+        }
     }
 }
 
@@ -255,6 +402,71 @@ impl<T: ArrowNumericType> Accumulator for MinAccumulator<T> {
     }
 }
 
+/// Represents a min aggregate expression with associated groupings.
+pub struct MinGroupAccumulator<T: ArrowNumericType> {
+    /// The current min values per group index.
+    mins: Vec<T::Native>,
+    /// The starting value for a new group.
+    starting_value: T::Native,
+    /// The input datatype.
+    data_type: DataType,
+}
+
+impl<T: ArrowNumericType> Debug for MinGroupAccumulator<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MinGroupAccumulator({})", self.data_type)
+    }
+}
+
+impl<T: ArrowNumericType> MinGroupAccumulator<T> {
+    pub fn new(data_type: DataType) -> Self {
+        Self {
+            mins: vec![],
+            starting_value: Default::default(),
+            data_type,
+        }
+    }
+}
+
+impl<T: ArrowNumericType> GroupAccumulator for MinGroupAccumulator<T> {
+    fn state(&mut self) -> Result<Vec<ArrayRef>> {
+        Ok(vec![self.eval()?])
+    }
+
+    fn eval(&mut self) -> Result<ArrayRef> {
+        let mins = self.mins.clone();
+        let array =
+            PrimitiveArray::<T>::new(mins.into(), None).with_data_type(self.data_type.clone());
+        Ok(Arc::new(array))
+    }
+
+    fn update_batch(
+        &mut self,
+        values: &[ArrayRef],
+        group_indices: &[usize],
+        total_num_groups: usize,
+    ) -> Result<()> {
+        assert_eq!(values.len(), 1, "single argument to update_batch");
+
+        let array = values[0].as_primitive::<T>();
+
+        self.mins.resize(total_num_groups, self.starting_value);
+
+        let mut seen_idx: HashSet<usize> = HashSet::new();
+        for (idx, value) in group_indices.iter().zip(array.iter()) {
+            if let Some(v) = value {
+                match seen_idx.insert(*idx) {
+                    true => self.mins[*idx] = v,
+                    false if self.mins[*idx] > v => self.mins[*idx] = v,
+                    _ => continue,
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -269,10 +481,27 @@ mod tests {
             },
             values::ScalarValue,
         },
-        tests::create_record_batch,
+        tests::{create_record_batch, create_record_batch_with_nulls},
     };
 
     use super::MaxExpr;
+
+    #[test]
+    fn test_max_group_accumulator() {
+        let expr = MaxExpr::new(Arc::new(ColumnExpr::new("c2", 1)), DataType::Int64);
+        let batch = create_record_batch_with_nulls();
+        let mut accum = expr.create_group_accumulator().unwrap();
+
+        let values = &[batch.column(1).clone()];
+        let group_indices = &[0, 1, 0];
+        let total_num_groups = 2;
+        accum
+            .update_batch(values, group_indices, total_num_groups)
+            .unwrap();
+        let result = accum.eval().unwrap();
+        let expected = &[1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(result.to_data().buffers()[0].as_slice(), expected);
+    }
 
     #[test]
     fn test_max_accumulator() {
@@ -285,6 +514,23 @@ mod tests {
         let expected = ScalarValue::Int64(Some(2));
 
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_min_group_accumulator() {
+        let expr = MinExpr::new(Arc::new(ColumnExpr::new("c2", 1)), DataType::Int64);
+        let batch = create_record_batch_with_nulls();
+        let mut accum = expr.create_group_accumulator().unwrap();
+
+        let values = &[batch.column(1).clone()];
+        let group_indices = &[0, 1, 0];
+        let total_num_groups = 2;
+        accum
+            .update_batch(values, group_indices, total_num_groups)
+            .unwrap();
+        let result = accum.eval().unwrap();
+        let expected = &[1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(result.to_data().buffers()[0].as_slice(), expected);
     }
 
     #[test]

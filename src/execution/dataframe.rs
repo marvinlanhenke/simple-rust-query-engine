@@ -99,7 +99,13 @@ mod tests {
         let ctx = SessionContext::new();
 
         let group_by = vec![col("c1")];
-        let aggregate_expressions = vec![count(col("c2")), sum(col("c2")), avg(col("c2"))];
+        let aggregate_expressions = vec![
+            count(col("c2")),
+            sum(col("c2")),
+            avg(col("c2")),
+            max(col("c2")),
+            min(col("c2")),
+        ];
 
         let df = ctx
             .read_csv("testdata/csv/simple_aggregate.csv", CsvReadOptions::new())
@@ -107,16 +113,18 @@ mod tests {
             .aggregate(group_by, aggregate_expressions)
             .unwrap();
 
+        df.show().await.unwrap();
+
         let expected = vec![
-            "+----+-----------+---------+---------+",
-            "| c1 | COUNT(c2) | SUM(c2) | AVG(c2) |",
-            "+----+-----------+---------+---------+",
-            "| a  | 2         | 3       | 1.5     |",
-            "| c  | 2         | 8       | 4.0     |",
-            "| d  | 1         | 4       | 4.0     |",
-            "| f  | 1         | 6       | 6.0     |",
-            "| b  | 1         | 7       | 7.0     |",
-            "+----+-----------+---------+---------+",
+            "+----+-----------+---------+---------+---------+---------+",
+            "| c1 | COUNT(c2) | SUM(c2) | AVG(c2) | MAX(c2) | MIN(c2) |",
+            "+----+-----------+---------+---------+---------+---------+",
+            "| a  | 2         | 3       | 1.5     | 2       | 1       |",
+            "| c  | 2         | 8       | 4.0     | 5       | 3       |",
+            "| d  | 1         | 4       | 4.0     | 4       | 4       |",
+            "| f  | 1         | 6       | 6.0     | 6       | 6       |",
+            "| b  | 1         | 7       | 7.0     | 7       | 7       |",
+            "+----+-----------+---------+---------+---------+---------+",
         ];
         assert_df_results(&df, expected).await;
     }
