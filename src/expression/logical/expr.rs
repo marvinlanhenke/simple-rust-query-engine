@@ -8,7 +8,9 @@ use crate::{
 use arrow::datatypes::{DataType, Field, Schema};
 use snafu::location;
 
-use super::{aggregate::Aggregate, binary::Binary, column::Column, expr_fn::binary_expr};
+use super::{
+    aggregate::Aggregate, binary::Binary, column::Column, expr_fn::binary_expr, sort::Sort,
+};
 
 /// Represents a logical [`Expression`] in an AST.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -19,8 +21,10 @@ pub enum Expression {
     Literal(ScalarValue),
     /// A [`Binary`] expression.
     Binary(Binary),
-    /// An [`Aggregate`] expression
+    /// An [`Aggregate`] expression.
     Aggregate(Aggregate),
+    /// A [`Sort`] expression.
+    Sort(Sort),
 }
 
 impl Expression {
@@ -54,6 +58,7 @@ impl Expression {
                 Signature::get_result_type(&lhs, e.op(), &rhs)
             }
             Aggregate(e) => e.result_type(),
+            Sort(e) => e.expression().data_type(schema),
         }
     }
 }
@@ -67,6 +72,7 @@ impl Display for Expression {
             Literal(e) => write!(f, "{}", e),
             Binary(e) => write!(f, "{}", e),
             Aggregate(e) => write!(f, "{}", e),
+            Sort(e) => write!(f, "{}", e),
         }
     }
 }
