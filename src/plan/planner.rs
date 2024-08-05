@@ -102,6 +102,7 @@ impl Planner {
                     aggregate_expressions,
                 )?))
             }
+            Sort(_plan) => todo!(),
         }
     }
 
@@ -151,6 +152,7 @@ impl Planner {
                 let right = Self::create_physical_expression(input, v.rhs())?;
                 Ok(Arc::new(BinaryExpr::new(left, v.op().clone(), right)))
             }
+            Sort(_v) => todo!(),
             other => Err(Error::InvalidOperation {
                 message: format!(
                     "Conversion from logical to physical expression is not supported for {}",
