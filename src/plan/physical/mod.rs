@@ -3,5 +3,4 @@ pub mod filter;
 pub mod plan;
 pub mod projection;
 pub mod scan;
-pub mod sort;
-
+pub mod sorts;
