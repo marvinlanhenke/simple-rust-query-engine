@@ -23,4 +23,9 @@ pub trait PhysicalExpression: Display + Debug + Send + Sync {
 
     /// Evaluates the expression against the input [`RecordBatch`].
     fn eval(&self, input: &RecordBatch) -> Result<ColumnarValue>;
+
+    /// Returns the sort order, if any.
+    fn ascending(&self) -> Option<bool> {
+        None
+    }
 }

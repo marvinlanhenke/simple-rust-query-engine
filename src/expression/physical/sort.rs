@@ -58,6 +58,10 @@ impl PhysicalExpression for SortExpr {
 
         Ok(ColumnarValue::Array(sort_array))
     }
+
+    fn ascending(&self) -> Option<bool> {
+        Some(self.ascending())
+    }
 }
 
 impl Display for SortExpr {
