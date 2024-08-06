@@ -9,6 +9,7 @@ use crate::{
     plan::{
         logical::{
             aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection,
+            sort::Sort,
         },
         planner::Planner,
     },
@@ -73,6 +74,13 @@ impl DataFrame {
 
         Ok(Self { plan })
     }
+
+    pub fn order_by(self, expression: Vec<Expression>) -> Self {
+        let input = self.plan;
+        let plan = LogicalPlan::Sort(Sort::new(Arc::new(input), expression));
+
+        Self { plan }
+    }
 }
 
 #[cfg(test)]
@@ -81,7 +89,7 @@ mod tests {
 
     use crate::{
         execution::context::SessionContext,
-        expression::logical::expr_fn::{avg, col, count, lit, max, min, sum},
+        expression::logical::expr_fn::{avg, col, count, lit, max, min, sort, sum},
         io::reader::csv::options::CsvReadOptions,
     };
 
@@ -92,6 +100,35 @@ mod tests {
         let results = pretty::pretty_format_batches(&results).unwrap().to_string();
         let results = results.trim().lines().collect::<Vec<_>>();
         assert_eq!(results, expected);
+    }
+
+    #[tokio::test]
+    async fn test_dataframe_order_by() {
+        let ctx = SessionContext::new();
+
+        let group_by = vec![col("c1")];
+        let aggregate_expressions = vec![count(col("c2")), sum(col("c2"))];
+        let order_by = vec![sort(col("c2"), false)];
+
+        let df = ctx
+            .read_csv("testdata/csv/simple_aggregate.csv", CsvReadOptions::new())
+            .unwrap()
+            .aggregate(group_by, aggregate_expressions)
+            .unwrap()
+            .order_by(order_by);
+
+        let expected = vec![
+            "+----+-----------+---------+",
+            "| c1 | COUNT(c2) | SUM(c2) |",
+            "+----+-----------+---------+",
+            "| a  | 2         | 3       |",
+            "| c  | 2         | 8       |",
+            "| d  | 1         | 4       |",
+            "| f  | 1         | 6       |",
+            "| b  | 1         | 7       |",
+            "+----+-----------+---------+",
+        ];
+        assert_df_results(&df, expected).await;
     }
 
     #[tokio::test]
@@ -112,8 +149,6 @@ mod tests {
             .unwrap()
             .aggregate(group_by, aggregate_expressions)
             .unwrap();
-
-        df.show().await.unwrap();
 
         let expected = vec![
             "+----+-----------+---------+---------+---------+---------+",
