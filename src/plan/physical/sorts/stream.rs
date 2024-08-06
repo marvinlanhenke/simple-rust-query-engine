@@ -42,11 +42,17 @@ impl RowCursorStream {
         schema: &Schema,
         expression: Vec<Arc<dyn PhysicalExpression>>,
         streams: Vec<RecordBatchStream>,
-        options: SortOptions,
     ) -> Result<Self> {
         let sort_fields = expression
             .iter()
             .map(|expr| {
+                let options = match expr.ascending() {
+                    Some(asc) => SortOptions {
+                        descending: !asc,
+                        ..Default::default()
+                    },
+                    None => SortOptions::default(),
+                };
                 let data_type = expr.data_type(schema)?;
                 Ok(SortField::new_with_options(data_type, options))
             })
