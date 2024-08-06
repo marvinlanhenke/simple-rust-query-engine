@@ -7,11 +7,16 @@ use super::{
     binary::Binary,
     column::Column,
     expr::Expression,
+    sort::Sort,
 };
 
 /// Creates an [`Expression::Column`] with provided `name`.
 pub fn col(name: impl Into<String>) -> Expression {
     Expression::Column(Column::new(name))
+}
+
+pub fn sort(expr: Expression, ascending: bool) -> Expression {
+    Expression::Sort(Sort::new(Arc::new(expr), ascending))
 }
 
 /// Creates an [`Expression::Binary`] with provided expressions and operator.
