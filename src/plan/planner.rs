@@ -19,11 +19,15 @@ use crate::{
             column::ColumnExpr,
             expr::PhysicalExpression,
             literal::LiteralExpr,
+            sort::SortExpr,
         },
     },
     plan::{
         logical::plan::LogicalPlan,
-        physical::{aggregate::AggregateExec, filter::FilterExec, projection::ProjectionExec},
+        physical::{
+            aggregate::AggregateExec, filter::FilterExec, projection::ProjectionExec,
+            sorts::sort::SortExec,
+        },
     },
 };
 
@@ -102,7 +106,16 @@ impl Planner {
                     aggregate_expressions,
                 )?))
             }
-            Sort(_plan) => todo!(),
+            Sort(plan) => {
+                let physical_input = Self::create_physical_plan(plan.input())?;
+                let order_by = plan
+                    .expressions()
+                    .iter()
+                    .map(|expr| Self::create_physical_expression(input, expr))
+                    .collect::<Result<Vec<_>>>()?;
+
+                Ok(Arc::new(SortExec::new(physical_input, order_by)))
+            }
         }
     }
 
@@ -152,7 +165,11 @@ impl Planner {
                 let right = Self::create_physical_expression(input, v.rhs())?;
                 Ok(Arc::new(BinaryExpr::new(left, v.op().clone(), right)))
             }
-            Sort(_v) => todo!(),
+            Sort(v) => {
+                let expression = Self::create_physical_expression(input, v.expression())?;
+                let sort_expression = SortExpr::new(expression, v.ascending());
+                Ok(Arc::new(sort_expression))
+            }
             other => Err(Error::InvalidOperation {
                 message: format!(
                     "Conversion from logical to physical expression is not supported for {}",
