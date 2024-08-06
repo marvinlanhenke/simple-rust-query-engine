@@ -11,7 +11,7 @@ use super::plan::LogicalPlan;
 pub struct Sort {
     /// The input [`LogicalPlan`].
     input: Arc<LogicalPlan>,
-    /// The sort expression.
+    /// The sort expressions.
     expression: Vec<Expression>,
 }
 
