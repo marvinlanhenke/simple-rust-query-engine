@@ -12,7 +12,7 @@ use crate::{
     io::RecordBatchStream,
     plan::physical::{
         plan::{format_exec, ExecutionPlan},
-        sorts::stream::RowCursorStream,
+        sorts::stream::{MergeStream, RowCursorStream},
     },
 };
 
@@ -185,11 +185,11 @@ impl Sorter {
     }
 
     fn merge_streams(&self, streams: Vec<RecordBatchStream>) -> Result<RecordBatchStream> {
-        let _streams =
+        let streams =
             RowCursorStream::try_new(&self.schema, self.expression.clone(), streams, self.options)?;
-        // let merge_streams = MergeStream::new();
-        // Ok(merge_streams.boxed())
-        todo!()
+        let streams = MergeStream::new(streams, self.schema.clone());
+
+        Ok(streams.boxed())
     }
 }
 
