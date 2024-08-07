@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Display, Write};
 
 use crate::{
     error::{Error, Result},
@@ -28,20 +28,25 @@ pub enum Expression {
 }
 
 impl Expression {
+    /// Returns the name of this expression as it should appear in a schema.
+    pub fn display_name(&self) -> Result<String> {
+        let mut name = String::new();
+        Self::display_name_impl(&mut name, self)?;
+        Ok(name)
+    }
+
     /// Resolves this column to its [`Field`] definition from a logical plan.
     pub fn to_field(&self, plan: &LogicalPlan) -> Result<Field> {
         use Expression::*;
 
         match self {
             Column(e) => e.to_field_from_plan(plan),
-            Aggregate(e) => e.expression().to_field(plan),
-            other => Err(Error::InvalidOperation {
-                message: format!(
-                    "The conversion of expression '{}' to field is not supported",
-                    other
-                ),
-                location: location!(),
-            }),
+            _ => {
+                // TODO: `nullable` should be derived from expr
+                let nullable = true;
+                let data_type = self.data_type(&plan.schema())?;
+                Ok(Field::new(self.display_name()?, data_type, nullable))
+            }
         }
     }
 
@@ -60,6 +65,29 @@ impl Expression {
             Aggregate(e) => e.result_type(),
             Sort(e) => e.expression().data_type(schema),
         }
+    }
+
+    fn display_name_impl<W: Write>(w: &mut W, expr: &Expression) -> Result<()> {
+        use Expression::*;
+
+        match expr {
+            Column(e) => write!(w, "{}", e)?,
+            Literal(e) => write!(w, "{}", e)?,
+            Binary(e) => {
+                Self::display_name_impl(w, e.lhs())?;
+                write!(w, " {} ", e.op())?;
+                Self::display_name_impl(w, e.rhs())?;
+            }
+            Aggregate(e) => write!(w, "{}({})", e.name(), e.expression())?,
+            Sort(_) => {
+                return Err(Error::InvalidOperation {
+                    message: "Display name is not supported for Sort expressions".to_string(),
+                    location: location!(),
+                })
+            }
+        };
+
+        Ok(())
     }
 }
 
