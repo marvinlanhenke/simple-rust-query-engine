@@ -24,6 +24,11 @@ pub enum Error {
         message: String,
         location: snafu::Location,
     },
+    #[snafu(display("FmtError: {message}, {location}"))]
+    Fmt {
+        message: String,
+        location: snafu::Location,
+    },
     #[snafu(display("ArrowError: {message}, {location}"))]
     Arrow {
         message: String,
@@ -55,4 +60,5 @@ macro_rules! make_error_from {
 }
 
 make_error_from!(std::io::Error, Io);
+make_error_from!(std::fmt::Error, Fmt);
 make_error_from!(arrow::error::ArrowError, Arrow);
