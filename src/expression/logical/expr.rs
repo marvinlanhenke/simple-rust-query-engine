@@ -42,10 +42,8 @@ impl Expression {
         match self {
             Column(e) => e.to_field_from_plan(plan),
             _ => {
-                // TODO: `nullable` should be derived from expr
-                let nullable = true;
                 let data_type = self.data_type(&plan.schema())?;
-                Ok(Field::new(self.display_name()?, data_type, nullable))
+                Ok(Field::new(self.display_name()?, data_type, true))
             }
         }
     }
