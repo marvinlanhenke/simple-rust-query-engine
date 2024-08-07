@@ -108,7 +108,7 @@ mod tests {
 
         let group_by = vec![col("c1")];
         let aggregate_expressions = vec![count(col("c2")), sum(col("c2"))];
-        let order_by = vec![sort(col("c2"), false)];
+        let order_by = vec![sort(col("SUM(c2)"), false)];
 
         let df = ctx
             .read_csv("testdata/csv/simple_aggregate.csv", CsvReadOptions::new())
@@ -121,11 +121,11 @@ mod tests {
             "+----+-----------+---------+",
             "| c1 | COUNT(c2) | SUM(c2) |",
             "+----+-----------+---------+",
-            "| a  | 2         | 3       |",
             "| c  | 2         | 8       |",
-            "| d  | 1         | 4       |",
-            "| f  | 1         | 6       |",
             "| b  | 1         | 7       |",
+            "| f  | 1         | 6       |",
+            "| d  | 1         | 4       |",
+            "| a  | 2         | 3       |",
             "+----+-----------+---------+",
         ];
         assert_df_results(&df, expected).await;
