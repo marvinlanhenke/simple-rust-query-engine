@@ -14,9 +14,13 @@ use super::{builder::BatchBuilder, cursor::Cursor};
 
 const DEFAULT_BATCH_SIZE: usize = 1024;
 
+/// A thin wrapper around a set of fused streams of `RecordBatch`'es,
+/// that skips over empty `RecordBatch`'es.
 struct FusedStreams(Vec<Fuse<RecordBatchStream>>);
 
 impl FusedStreams {
+    /// Polls the next `RecordBatch` from the specified stream.
+    /// Skips empty `RecordBatch`'es.
     fn poll_next(
         &mut self,
         cx: &mut Context<'_>,
@@ -31,13 +35,20 @@ impl FusedStreams {
     }
 }
 
+/// A stream that wraps a set of fused streams of `RecordBatch`'es
+/// and computes a tuple containing `Rows` and a `Recordbatch`
+/// based on the provided sort expression.
 pub struct RowCursorStream {
+    /// Converts arrow arrays to a row-format.
     converter: RowConverter,
+    /// The sort expression.
     expression: Vec<Arc<dyn PhysicalExpression>>,
+    /// A fused stream of `RecordBatch`'es.
     streams: FusedStreams,
 }
 
 impl RowCursorStream {
+    /// Creates a new [`RowCursorStream`] instance.
     pub fn try_new(
         schema: &Schema,
         expression: Vec<Arc<dyn PhysicalExpression>>,
@@ -68,10 +79,14 @@ impl RowCursorStream {
         })
     }
 
+    /// Retrieves the partitions, which
+    /// is the number of the underlying fused streams of `RecordBatch`'es.
     pub fn partitions(&self) -> usize {
         self.streams.0.len()
     }
 
+    /// Retrieve and convert the next `RecordBatch` from
+    /// the inner stream, specified by the provided stream index.
     pub fn poll_next(
         &mut self,
         cx: &mut Context<'_>,
@@ -85,6 +100,8 @@ impl RowCursorStream {
         }))
     }
 
+    /// Evaluates the sort expression on the provided `RecordBatch`
+    /// and converts the resulting columns into the row-format.
     fn convert_batch(&self, batch: &RecordBatch) -> Result<Rows> {
         let cols = self
             .expression
@@ -94,19 +111,33 @@ impl RowCursorStream {
         Ok(self.converter.convert_columns(&cols)?)
     }
 }
-
+/// A stream that merges multiple sorted streams
+/// into a single sorted stream using a k-way merge algorithm
+/// with a tournament tree.
 pub struct MergeStream {
+    /// The current `BatchBuilder` in progress,
+    /// that is used to create `RecordBatch`'es row-by-row.
     in_progress: BatchBuilder,
+    /// The underlying streams wrapped in a `RowCursorStream`,
+    /// which allows row-by-row comparision.
     streams: RowCursorStream,
+    /// Indicates whether the merge has been aborted.
     aborted: bool,
+    /// A list of [`Cursor`]'s keeping track
+    /// of the current position in each stream.
     cursors: Vec<Option<Cursor>>,
+    /// The tournament tree used for the k-way-merge.
     loser_tree: Vec<usize>,
+    /// Indicated whether the tournament tree has been updated.
     loser_tree_adjusted: bool,
+    /// The batch size used for producing `RecordBatch`'es.
     batch_size: usize,
+    /// The number of rows produced so far.
     produced: usize,
 }
 
 impl MergeStream {
+    /// Creates a new [`MergeStream`] instance.
     pub fn new(streams: RowCursorStream, schema: SchemaRef) -> Self {
         let stream_count = streams.partitions();
 
@@ -122,12 +153,16 @@ impl MergeStream {
         }
     }
 
+    /// Polls the next `RecordBatch` from the specified stream if the cursor is not already available.
     fn maybe_poll_stream(&mut self, cx: &mut Context<'_>, idx: usize) -> Poll<Result<()>> {
+        // Cursor has not yet finished
+        // thus we don't need to retrieve a new `RecordBatch`.
         if self.cursors[idx].is_some() {
-            // Cursor not finished - no need for a new RecordBatch.
             return Poll::Ready(Ok(()));
         }
 
+        // We initialize a new cursor from the retrived `Rows`
+        // at the provided stream index. We also push the new `RecordBatch` into the builder.
         match ready!(self.streams.poll_next(cx, idx)) {
             None => Poll::Ready(Ok(())),
             Some(Err(e)) => Poll::Ready(Err(e)),
@@ -139,6 +174,19 @@ impl MergeStream {
         }
     }
 
+    /// Polls the next `RecordBatch` from the `MergeStream`.
+    ///
+    /// This method merges sorted streams of `RecordBatch`es using a K-Way Merge algorithm
+    /// with a loser tree (tournament tree). In this process, each stream's current element
+    /// (pointed to by a cursor) is compared against others on a row-by-row basis within a loop.
+    ///
+    /// The stream with the smallest element is determined as the winner and moves toward the
+    /// root of the tree. The loser tree is then updated accordingly. The index of the winning
+    /// stream (found at index 0 of the loser tree) is used to advance the cursor of that stream.
+    /// The next row from this stream is pushed into the `BatchBuilder`.
+    ///
+    /// This process repeats until the specified batch size is reached, at which point a sorted
+    /// and merged `RecordBatch` is yielded.
     fn poll_next_inner(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<RecordBatch>>> {
         if self.aborted {
             return Poll::Ready(None);
@@ -179,6 +227,7 @@ impl MergeStream {
         }
     }
 
+    /// Advances the cursor for the specified stream index.
     fn advance(&mut self, stream_idx: usize) -> bool {
         let slot = &mut self.cursors[stream_idx];
         match slot.as_mut() {
@@ -193,6 +242,8 @@ impl MergeStream {
         }
     }
 
+    /// Compares two stream indices to determine
+    /// if the left-hand side is greater than the right-hand side.
     #[inline]
     fn is_gt(&self, lhs: usize, rhs: usize) -> bool {
         match (&self.cursors[lhs], &self.cursors[rhs]) {
@@ -202,16 +253,19 @@ impl MergeStream {
         }
     }
 
+    /// Computes the leaf node index for the loser tree based on the cursor index.
     #[inline]
     fn lt_leaf_node_index(&self, cursor_index: usize) -> usize {
         (self.cursors.len() + cursor_index) / 2
     }
 
+    /// Computes the parent node index for the loser tree based on the node index.
     #[inline]
     fn lt_parent_node_index(&self, node_index: usize) -> usize {
         node_index / 2
     }
 
+    /// Initializes the loser tree with the current cursors.
     fn init_loser_tree(&mut self) {
         self.loser_tree = vec![usize::MAX; self.cursors.len()];
 
@@ -231,6 +285,7 @@ impl MergeStream {
         self.loser_tree_adjusted = true;
     }
 
+    /// Updates the loser tree after a cursor has been advanced.
     fn update_loser_tree(&mut self) {
         let mut winner = self.loser_tree[0];
         let mut compare_to = self.lt_leaf_node_index(winner);
@@ -258,7 +313,7 @@ impl Stream for MergeStream {
     }
 }
 
-/// An empty [`RecordBatchStream`] that produces no results.
+/// An empty stream of `RecordBatch`'es that produces no results.
 pub struct EmptyRecordBatchStream;
 
 impl Stream for EmptyRecordBatchStream {
@@ -271,6 +326,3 @@ impl Stream for EmptyRecordBatchStream {
         Poll::Ready(None)
     }
 }
-
-#[cfg(test)]
-mod tests {}
