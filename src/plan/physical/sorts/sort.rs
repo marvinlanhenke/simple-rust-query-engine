@@ -55,6 +55,9 @@ impl ExecutionPlan for SortExec {
 
         let mut sorter = Sorter::new(self.input.schema(), self.expression.clone());
 
+        // Retrieve each `RecordBatch` from the input stream
+        // and insert it into the Sorter until the input stream is exhausted.
+        // Finally, perform the sort operation to produce a stream of sorted `RecordBatch` instances.
         let stream = futures::stream::once(async move {
             while let Some(Ok(batch)) = input.next().await {
                 sorter.insert_batch(batch);
@@ -83,19 +86,23 @@ impl Display for SortExec {
     }
 }
 
+/// A helper struct for performing
+/// in-memory sorting of `RecordBatch`'es.
 struct Sorter {
+    /// A reference to the schema of the underlying input stream.
     schema: SchemaRef,
+    /// An internal buffer of `RecordBatch`'es.
     batches: Vec<RecordBatch>,
-    batches_sorted: bool,
+    /// The sort expression.
     expression: Vec<Arc<dyn PhysicalExpression>>,
 }
 
 impl Sorter {
+    /// Creates a new [`Sorter`] instance.
     fn new(schema: SchemaRef, expression: Vec<Arc<dyn PhysicalExpression>>) -> Self {
         Self {
             schema,
             batches: vec![],
-            batches_sorted: false,
             expression,
         }
     }
@@ -126,13 +133,14 @@ impl Sorter {
             .collect()
     }
 
+    /// Inserts a `RecordBatch` into the sorter.
     fn insert_batch(&mut self, batch: RecordBatch) {
         if batch.num_rows() > 0 {
             self.batches.push(batch);
-            self.batches_sorted = false;
         }
     }
 
+    /// Sorts the record batches and returns a stream of sorted `RecordBatch`'es.
     fn sort(&mut self) -> Result<RecordBatchStream> {
         if self.batches.is_empty() {
             let stream = EmptyRecordBatchStream;
@@ -142,6 +150,8 @@ impl Sorter {
         self.in_memory_stream_sort()
     }
 
+    /// Performs in-memory sorting on `RecordBatch`'es.
+    /// Returns a single, merged stream of sorted `RecordBatch`'es.
     fn in_memory_stream_sort(&mut self) -> Result<RecordBatchStream> {
         if self.batches.len() == 1 {
             let batch = self.batches.remove(0);
@@ -156,6 +166,8 @@ impl Sorter {
         self.merge_streams(streams)
     }
 
+    /// Performs in-memory sorting on a single `RecordBatch`
+    /// and returns a stream of sorted `RecordBatch`'es.
     fn in_memory_batch_sort(&self, batch: RecordBatch) -> Result<RecordBatchStream> {
         let sort_columns = self.map_to_sort_column(&batch)?;
 
@@ -178,6 +190,7 @@ impl Sorter {
         Ok(stream.boxed())
     }
 
+    /// Merges multiple streams of sorted record batches into a single stream.
     fn merge_streams(&self, streams: Vec<RecordBatchStream>) -> Result<RecordBatchStream> {
         let streams = RowCursorStream::try_new(&self.schema, self.expression.clone(), streams)?;
         let streams = MergeStream::new(streams, self.schema.clone());
@@ -202,7 +215,9 @@ mod tests {
     #[tokio::test]
     async fn test_sort_stream() {
         let schema = Arc::new(create_schema());
-        let config = CsvFileOpenerConfig::builder(schema.clone()).build();
+        let config = CsvFileOpenerConfig::builder(schema.clone())
+            .with_batch_size(2)
+            .build();
         let input = Arc::new(CsvExec::new("testdata/csv/simple_aggregate.csv", config));
         let order_by = SortExpr::new(Arc::new(ColumnExpr::new("c2", 1)), true);
         let exec = SortExec::new(input, vec![Arc::new(order_by)]);
