@@ -2,7 +2,10 @@ use std::fmt::Display;
 
 use arrow::datatypes::SchemaRef;
 
-use super::{aggregate::Aggregate, filter::Filter, projection::Projection, scan::Scan, sort::Sort};
+use super::{
+    aggregate::Aggregate, filter::Filter, limit::Limit, projection::Projection, scan::Scan,
+    sort::Sort,
+};
 
 /// Represents a [`LogicalPlan`] for query execution.
 #[derive(Debug)]
@@ -29,6 +32,9 @@ pub enum LogicalPlan {
     /// This is similar to the SQL `ORDER BY` clause,
     /// e.g. `SELECT * FROM table ORDER BY c1 ASC;`
     Sort(Sort),
+    /// Represent a limit operation, skips some rows,
+    /// and then fetches some number of rows.
+    Limit(Limit),
 }
 
 impl LogicalPlan {
@@ -40,6 +46,7 @@ impl LogicalPlan {
             LogicalPlan::Filter(plan) => plan.schema(),
             LogicalPlan::Aggregate(plan) => plan.schema(),
             LogicalPlan::Sort(plan) => plan.schema(),
+            LogicalPlan::Limit(plan) => plan.schema(),
         }
     }
 
@@ -51,6 +58,7 @@ impl LogicalPlan {
             LogicalPlan::Filter(plan) => plan.children(),
             LogicalPlan::Aggregate(plan) => plan.children(),
             LogicalPlan::Sort(plan) => plan.children(),
+            LogicalPlan::Limit(plan) => plan.children(),
         }
     }
 }
@@ -77,6 +85,7 @@ pub fn format_plan(
         LogicalPlan::Filter(plan) => write!(f, "{}", plan)?,
         LogicalPlan::Aggregate(plan) => write!(f, "{}", plan)?,
         LogicalPlan::Sort(plan) => write!(f, "{}", plan)?,
+        LogicalPlan::Limit(plan) => write!(f, "{}", plan)?,
     }
     writeln!(f)?;
 
