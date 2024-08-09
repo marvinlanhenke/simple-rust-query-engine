@@ -25,8 +25,8 @@ use crate::{
     plan::{
         logical::plan::LogicalPlan,
         physical::{
-            aggregate::AggregateExec, filter::FilterExec, projection::ProjectionExec,
-            sorts::sort::SortExec,
+            aggregate::AggregateExec, filter::FilterExec, limit::LimitExec,
+            projection::ProjectionExec, sorts::sort::SortExec,
         },
     },
 };
@@ -115,6 +115,13 @@ impl Planner {
                     .collect::<Result<Vec<_>>>()?;
 
                 Ok(Arc::new(SortExec::new(physical_input, order_by)))
+            }
+            Limit(plan) => {
+                let physical_input = Self::create_physical_plan(plan.input())?;
+                let skip = plan.skip();
+                let fetch = plan.fetch();
+
+                Ok(Arc::new(LimitExec::new(physical_input, skip, fetch)))
             }
         }
     }
