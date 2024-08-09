@@ -8,8 +8,8 @@ use crate::{
     expression::logical::expr::Expression,
     plan::{
         logical::{
-            aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection,
-            sort::Sort,
+            aggregate::Aggregate, filter::Filter, limit::Limit, plan::LogicalPlan,
+            projection::Projection, sort::Sort,
         },
         planner::Planner,
     },
@@ -75,9 +75,19 @@ impl DataFrame {
         Ok(Self { plan })
     }
 
+    /// Performs an order_by or sort operation based on
+    /// the provided sort expression.
     pub fn order_by(self, expression: Vec<Expression>) -> Self {
         let input = self.plan;
         let plan = LogicalPlan::Sort(Sort::new(Arc::new(input), expression));
+
+        Self { plan }
+    }
+
+    /// Performs a limit operation, skipping rows, and fetching some number of rows.
+    pub fn limit(self, skip: usize, fetch: Option<usize>) -> Self {
+        let input = self.plan;
+        let plan = LogicalPlan::Limit(Limit::new(Arc::new(input), skip, fetch));
 
         Self { plan }
     }
@@ -100,6 +110,26 @@ mod tests {
         let results = pretty::pretty_format_batches(&results).unwrap().to_string();
         let results = results.trim().lines().collect::<Vec<_>>();
         assert_eq!(results, expected);
+    }
+
+    #[tokio::test]
+    async fn test_dataframe_limit() {
+        let ctx = SessionContext::new();
+
+        let df = ctx
+            .read_csv("testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap()
+            .limit(1, Some(2));
+
+        let expected = vec![
+            "+----+----+----+",
+            "| c1 | c2 | c3 |",
+            "+----+----+----+",
+            "| b  | 2  | 3  |",
+            "| c  | 3  | 4  |",
+            "+----+----+----+",
+        ];
+        assert_df_results(&df, expected).await;
     }
 
     #[tokio::test]
