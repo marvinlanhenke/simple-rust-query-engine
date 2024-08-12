@@ -8,14 +8,22 @@ use crate::{error::Result, io::RecordBatchStream};
 
 use super::plan::{format_exec, ExecutionPlan};
 
+/// Represents a physical execution plan node that limits the number of rows processed
+/// in a query execution, optionally skipping a number of rows and fetching a maximum
+/// number of rows from the input execution plan.
 #[derive(Debug)]
 pub struct LimitExec {
+    /// The input [`ExecutionPlan`].
     input: Arc<dyn ExecutionPlan>,
+    /// The number of rows to skip before fetching starts.
     skip: usize,
+    /// The maximum number of rows to fetch after skipping.
+    /// If `None`, all rows after the skip will be fetched.
     fetch: Option<usize>,
 }
 
 impl LimitExec {
+    /// Creates a new [`LimitExec`] instance.
     pub fn new(input: Arc<dyn ExecutionPlan>, skip: usize, fetch: Option<usize>) -> Self {
         Self { input, skip, fetch }
     }
@@ -53,14 +61,24 @@ impl Display for LimitExec {
     }
 }
 
+/// Represents a stream that applies the skip and fetch limits
+/// to the rows, produced by the input execution plan.
+///
+/// The `LimitExecStream` handles the logic of skipping a specified number of rows
+/// and then fetching up to a maximum number of rows from the input stream.
 struct LimitExecStream {
+    /// The input stream of `RecordBatch`es.
     input: Option<RecordBatchStream>,
+    /// The schema of the output `RecordBatch`.
     schema: SchemaRef,
+    /// The number of rows to skip before fetching starts.
     skip: usize,
+    /// The maximum number of rows to fetch after skipping.
     fetch: usize,
 }
 
 impl LimitExecStream {
+    /// Creates a new [`LimitExecStream`] instance.
     fn new(input: RecordBatchStream, schema: SchemaRef, skip: usize, fetch: Option<usize>) -> Self {
         Self {
             input: Some(input),
@@ -70,6 +88,12 @@ impl LimitExecStream {
         }
     }
 
+    /// Polls the input stream and skips the specified number of rows.
+    ///
+    /// This method continues polling the input stream until the required number of rows
+    /// have been skipped. If the current `RecordBatch` contains fewer rows than needed
+    /// to fulfill the skip requirement, it will be completely skipped. Otherwise, the
+    /// remaining rows after the skip are returned.
     fn poll_and_skip(
         &mut self,
         cx: &mut std::task::Context<'_>,
@@ -102,6 +126,11 @@ impl LimitExecStream {
         }
     }
 
+    /// Limits the rows of the `RecordBatch` according to the fetch limit.
+    ///
+    /// If the `RecordBatch` contains fewer rows than the fetch limit, the entire batch
+    /// is returned. If it contains more rows, only the number of rows up to the fetch limit
+    /// are returned, and the fetch limit is reduced to zero.
     fn stream_limit(&mut self, batch: RecordBatch) -> Option<RecordBatch> {
         if self.fetch == 0 {
             self.input = None;
@@ -126,6 +155,11 @@ impl LimitExecStream {
 impl Stream for LimitExecStream {
     type Item = Result<RecordBatch>;
 
+    /// Polls the next `RecordBatch` from the `LimitExecStream`.
+    ///
+    /// This method manages the logic of skipping rows and applying the fetch limit.
+    /// If skipping is required, it delegates to `poll_and_skip`. If the fetch limit
+    /// has been reached, it terminates the stream.
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
