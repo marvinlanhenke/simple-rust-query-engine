@@ -4,26 +4,38 @@ use arrow_schema::SchemaRef;
 
 use super::plan::LogicalPlan;
 
+/// Represents a logical plan node that limits the number of rows processed
+/// by a query, potentially skipping a number of rows and fetching a maximum
+/// number of rows from the input plan.
 #[derive(Debug)]
 pub struct Limit {
+    /// The input [`LogicalPlan`].
     input: Arc<LogicalPlan>,
+    /// The number of rows to skip before fetching starts.
     skip: usize,
+    /// The maximum number of rows to fetch after skipping.
+    /// If `None`, all rows after the skip will be fetched.
     fetch: Option<usize>,
 }
 
 impl Limit {
+    /// Creates a new [`Limit`] instance.
     pub fn new(input: Arc<LogicalPlan>, skip: usize, fetch: Option<usize>) -> Self {
         Self { input, skip, fetch }
     }
 
+    /// Retrieves the input [`LogicalPlan`].
     pub fn input(&self) -> &LogicalPlan {
         &self.input
     }
 
+    /// The number of rows to skip before fetching starts.
     pub fn skip(&self) -> usize {
         self.skip
     }
 
+    /// The maximum number of rows to fetch after skipping.
+    /// If `None`, all rows after the skip will be fetched.
     pub fn fetch(&self) -> Option<usize> {
         self.fetch
     }
