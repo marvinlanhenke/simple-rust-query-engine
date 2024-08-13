@@ -123,6 +123,7 @@ impl Planner {
 
                 Ok(Arc::new(LimitExec::new(physical_input, skip, fetch)))
             }
+            Join(_) => todo!(),
         }
     }
 
