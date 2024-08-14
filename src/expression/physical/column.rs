@@ -15,7 +15,7 @@ use super::expr::PhysicalExpression;
 
 /// Represents a physical [`Column`]
 /// at a given index in a [`RecordBatch`].
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ColumnExpr {
     /// The column name.
     name: String,

@@ -1,4 +1,4 @@
-use std::{any::Any, fmt::Display, sync::Arc, task::Poll};
+use std::{any::Any, collections::HashSet, fmt::Display, sync::Arc, task::Poll};
 
 use ahash::RandomState;
 use arrow_array::RecordBatch;
@@ -8,7 +8,10 @@ use snafu::location;
 
 use crate::{
     error::{Error, Result},
-    expression::physical::expr::PhysicalExpression,
+    expression::{
+        logical::column::Column,
+        physical::{column::ColumnExpr, expr::PhysicalExpression},
+    },
     io::RecordBatchStream,
     plan::{
         logical::join::JoinType,
@@ -90,8 +93,48 @@ impl HashJoinExec {
         })
     }
 
+    /// Checks if the columns intersection from both schemas matches the `JoinOn` condition.
     fn is_valid_join(left_schema: &Schema, right_schema: &Schema, on: &JoinOn) -> Result<()> {
-        todo!()
+        let extract_columns = |schema: &Schema| -> HashSet<ColumnExpr> {
+            schema
+                .fields()
+                .iter()
+                .enumerate()
+                .map(|(idx, field)| ColumnExpr::new(field.name(), idx))
+                .collect()
+        };
+
+        let extract_join_columns = |on: &JoinOn, side: JoinSide| -> Result<HashSet<ColumnExpr>> {
+            on.iter()
+                .map(|expr| {
+                    let expr = match side {
+                        JoinSide::Left => &expr.0,
+                        JoinSide::Right => &expr.1,
+                    };
+                    expr.as_any()
+                        .downcast_ref::<ColumnExpr>()
+                        .ok_or_else(|| Error::InvalidOperation {
+                            message: "failed to downcast expression".to_string(),
+                            location: location!(),
+                        })
+                        .cloned()
+                })
+                .collect()
+        };
+
+        let left = extract_columns(left_schema);
+        let left_on = extract_join_columns(on, JoinSide::Left)?;
+        let left_missing = left_on.difference(&left).collect::<HashSet<_>>();
+
+        let right = extract_columns(right_schema);
+        let right_on = extract_join_columns(on, JoinSide::Right)?;
+        let right_missing = right_on.difference(&right).collect::<HashSet<_>>();
+
+        if !left_missing.is_empty() | !right_missing.is_empty() {
+            return Err(Error::InvalidData { message: "one side of the join does not have all columns that are required by the 'on' join condition".to_string(), location: location!() });
+        }
+
+        Ok(())
     }
 
     fn create_join_schema(
@@ -207,5 +250,52 @@ impl Stream for HashJoinStream {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use std::sync::Arc;
 
+    use crate::{expression::physical::column::ColumnExpr, tests::create_schema};
+
+    use super::HashJoinExec;
+
+    #[test]
+    fn test_is_valid_join() {
+        let left_schema = create_schema();
+        let right_schema = create_schema();
+
+        let result = HashJoinExec::is_valid_join(
+            &left_schema,
+            &right_schema,
+            &vec![(
+                Arc::new(ColumnExpr::new("c1", 0)),
+                Arc::new(ColumnExpr::new("c1", 0)),
+            )],
+        );
+        assert!(result.is_ok());
+
+        let result = HashJoinExec::is_valid_join(
+            &left_schema,
+            &right_schema,
+            &vec![
+                (
+                    Arc::new(ColumnExpr::new("c1", 0)),
+                    Arc::new(ColumnExpr::new("c1", 0)),
+                ),
+                (
+                    Arc::new(ColumnExpr::new("c2", 1)),
+                    Arc::new(ColumnExpr::new("c2", 1)),
+                ),
+            ],
+        );
+        assert!(result.is_ok());
+
+        let result = HashJoinExec::is_valid_join(
+            &left_schema,
+            &right_schema,
+            &vec![(
+                Arc::new(ColumnExpr::new("c1", 0)),
+                Arc::new(ColumnExpr::new("c4", 3)),
+            )],
+        );
+        assert!(result.is_err());
+    }
+}
