@@ -2,7 +2,7 @@ use std::{any::Any, collections::HashSet, fmt::Display, sync::Arc, task::Poll};
 
 use ahash::RandomState;
 use arrow_array::RecordBatch;
-use arrow_schema::{Schema, SchemaRef};
+use arrow_schema::{Field, FieldRef, Schema, SchemaBuilder, SchemaRef};
 use futures::Stream;
 use snafu::location;
 
@@ -21,7 +21,7 @@ use crate::{
 
 pub type JoinOn = Vec<(Arc<dyn PhysicalExpression>, Arc<dyn PhysicalExpression>)>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum JoinSide {
     Left,
     Right,
@@ -137,12 +137,48 @@ impl HashJoinExec {
         Ok(())
     }
 
+    /// Creates a schema for a join operation, starting with the left sides fields.
     fn create_join_schema(
         left_schema: &Schema,
         right_schema: &Schema,
         join_type: &JoinType,
     ) -> (SchemaRef, Vec<JoinColumnIndex>) {
-        todo!()
+        use JoinType::*;
+
+        let (fields, column_indices): (SchemaBuilder, Vec<JoinColumnIndex>) = match join_type {
+            Inner | Left => {
+                let left_fields = left_schema
+                    .fields()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, field)| {
+                        (
+                            field.clone(),
+                            JoinColumnIndex {
+                                index,
+                                side: JoinSide::Left,
+                            },
+                        )
+                    });
+                let right_fields =
+                    right_schema
+                        .fields()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, field)| {
+                            (
+                                field.clone(),
+                                JoinColumnIndex {
+                                    index,
+                                    side: JoinSide::Right,
+                                },
+                            )
+                        });
+                left_fields.chain(right_fields).unzip()
+            }
+        };
+
+        (Arc::new(fields.finish()), column_indices)
     }
 
     fn is_valid_projection(schema: &Schema, projection: Option<&Vec<usize>>) -> Result<()> {
@@ -253,9 +289,23 @@ impl Stream for HashJoinStream {
 mod tests {
     use std::sync::Arc;
 
-    use crate::{expression::physical::column::ColumnExpr, tests::create_schema};
+    use crate::{
+        expression::physical::column::ColumnExpr, plan::logical::join::JoinType,
+        tests::create_schema,
+    };
 
     use super::HashJoinExec;
+
+    #[test]
+    fn test_create_join_schema() {
+        let left_schema = create_schema();
+        let right_schema = create_schema();
+
+        let (schema, column_indices) =
+            HashJoinExec::create_join_schema(&left_schema, &right_schema, &JoinType::Inner);
+        assert_eq!(schema.fields().len(), 6);
+        assert_eq!(column_indices.len(), 6);
+    }
 
     #[test]
     fn test_is_valid_join() {
