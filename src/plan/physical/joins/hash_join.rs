@@ -531,8 +531,6 @@ impl HashJoinStream {
             Poll::Pending => return Poll::Pending,
         };
 
-        println!("{left_data:?}");
-
         self.state = HashJoinStreamState::FetchProbeBatch;
         self.build_side = BuildSideState::Ready(Arc::new(left_data));
 
