@@ -6,17 +6,10 @@ use std::{
     task::{ready, Poll},
 };
 
-use arrow_array::Array;
-
 use ahash::RandomState;
-use arrow::{
-    array::downcast_array, compute::concat_batches, datatypes::ArrowPrimitiveType,
-    downcast_primitive_array,
-};
-use arrow_array::{
-    ArrayAccessor, ArrayRef, BooleanArray, PrimitiveArray, RecordBatch, StringArray,
-};
-use arrow_schema::{DataType, Schema, SchemaBuilder, SchemaRef};
+use arrow::compute::concat_batches;
+use arrow_array::RecordBatch;
+use arrow_schema::{Schema, SchemaBuilder, SchemaRef};
 use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryStreamExt};
 use snafu::location;
 
@@ -28,8 +21,9 @@ use crate::{
         logical::join::JoinType,
         physical::plan::{format_exec, ExecutionPlan},
     },
-    utils::HashValue,
 };
+
+use super::utils::create_hashes;
 
 const DEFAULT_BATCH_SIZE: usize = 1024;
 
@@ -256,6 +250,7 @@ impl HashJoinExec {
         Ok(JoinLeftData { map, batch })
     }
 
+    /// Updates `JoinHashMap` by evaluating and hashing the `join-on` key expressions.
     fn update_hash(
         on: &[Arc<dyn PhysicalExpression>],
         batch: &RecordBatch,
@@ -263,15 +258,12 @@ impl HashJoinExec {
         hashes_buffer: &mut Vec<u64>,
         random_state: &RandomState,
     ) -> Result<()> {
-        // Evaluate the join-on key expressions in order
-        // to obtain the actual join-on values as an Vec<ArrayRef>
         let keys = on
             .iter()
             .map(|expr| expr.eval(batch)?.into_array(batch.num_rows()))
             .collect::<Result<Vec<_>>>()?;
 
-        // Next, we need to hash the join-on values.
-        let hash_values = Self::create_hashes(&keys, hashes_buffer, random_state)?;
+        let hash_values = create_hashes(&keys, hashes_buffer, random_state)?;
 
         // TODO: Handle hash_collisions, otherwise we cannot track
         // rows that have the same hashvalue but map to different row indices.
@@ -280,69 +272,6 @@ impl HashJoinExec {
         }
 
         Ok(())
-    }
-
-    fn create_hashes<'a>(
-        arrays: &[ArrayRef],
-        hashes_buffer: &'a mut Vec<u64>,
-        random_state: &RandomState,
-    ) -> Result<&'a mut Vec<u64>> {
-        for col in arrays.iter() {
-            let array = col.as_ref();
-
-            downcast_primitive_array!(
-                array => Self::hash_primitive_array(array, hashes_buffer, random_state),
-                DataType::Null =>
-                    hashes_buffer
-                    .iter_mut()
-                    .for_each(|hash| *hash = random_state.hash_one(1)),
-                DataType::Boolean => {
-                    let array = downcast_array::<BooleanArray>(array);
-                    Self::hash_array(&array, hashes_buffer, random_state);
-                }
-                DataType::Utf8 => {
-                    let array = downcast_array::<StringArray>(array);
-                    Self::hash_array(&array, hashes_buffer, random_state);
-                }
-                other => return Err(
-                    Error::InvalidOperation {
-                        message: format!("data type {} not supported in hasher", other),
-                        location: location!()
-                    })
-            );
-        }
-        Ok(hashes_buffer)
-    }
-
-    /// Hashes non-null values of an array, updating the hash buffer.
-    fn hash_array<T>(array: T, hashes_buffer: &mut [u64], random_state: &RandomState)
-    where
-        T: ArrayAccessor,
-        T::Item: HashValue,
-    {
-        for (idx, hash) in hashes_buffer.iter_mut().enumerate() {
-            if !array.is_null(idx) {
-                let value = array.value(idx);
-                *hash = value.hash_one(random_state);
-            }
-        }
-    }
-
-    /// Specifically hashes values in a primitive array, considering nullability.
-    fn hash_primitive_array<T>(
-        array: &PrimitiveArray<T>,
-        hashes_buffer: &mut [u64],
-        random_state: &RandomState,
-    ) where
-        T: ArrowPrimitiveType,
-        <T as arrow_array::ArrowPrimitiveType>::Native: HashValue,
-    {
-        for (idx, hash) in hashes_buffer.iter_mut().enumerate() {
-            if !array.is_null(idx) {
-                let value = array.value(idx);
-                *hash = value.hash_one(random_state);
-            }
-        }
     }
 }
 
@@ -394,7 +323,7 @@ impl ExecutionPlan for HashJoinExec {
             column_indices: projected_column_indices,
             state: HashJoinStreamState::WaitBuildSide,
             batch_size: DEFAULT_BATCH_SIZE,
-            hashes: vec![],
+            hashes_buffer: vec![],
             random_state: self.random_state.clone(),
         };
 
@@ -492,7 +421,7 @@ struct HashJoinStream {
     /// Maximum output batch size.
     batch_size: usize,
     /// Internal buffer for computing hashes.
-    hashes: Vec<u64>,
+    hashes_buffer: Vec<u64>,
     random_state: RandomState,
 }
 
@@ -541,7 +470,26 @@ impl HashJoinStream {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<StreamResultState<Option<RecordBatch>>>> {
-        todo!()
+        match ready!(self.probe_input.poll_next_unpin(cx)) {
+            None => self.state = HashJoinStreamState::ExhaustedProbeSide,
+            Some(Ok(batch)) => {
+                let keys = self
+                    .on_right
+                    .iter()
+                    .map(|expr| expr.eval(&batch)?.into_array(batch.num_rows()))
+                    .collect::<Result<Vec<_>>>()?;
+                self.hashes_buffer.clear();
+                self.hashes_buffer.resize(batch.num_rows(), 0);
+                create_hashes(&keys, &mut self.hashes_buffer, &self.random_state)?;
+                self.state = HashJoinStreamState::ProcessProbeBatch(ProcessProbeBatchState {
+                    batch,
+                    offset: (0, None),
+                    joined_probe_index: None,
+                });
+            }
+            Some(Err(e)) => return Poll::Ready(Err(e)),
+        };
+        Poll::Ready(Ok(StreamResultState::Continue))
     }
 
     fn process_probe_batch(
