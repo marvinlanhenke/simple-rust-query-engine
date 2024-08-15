@@ -2,22 +2,21 @@ use std::{any::Any, collections::HashSet, fmt::Display, sync::Arc, task::Poll};
 
 use ahash::RandomState;
 use arrow_array::RecordBatch;
-use arrow_schema::{Field, FieldRef, Schema, SchemaBuilder, SchemaRef};
-use futures::Stream;
+use arrow_schema::{Schema, SchemaBuilder, SchemaRef};
+use futures::{Stream, StreamExt};
 use snafu::location;
 
 use crate::{
     error::{Error, Result},
-    expression::{
-        logical::column::Column,
-        physical::{column::ColumnExpr, expr::PhysicalExpression},
-    },
+    expression::physical::{column::ColumnExpr, expr::PhysicalExpression},
     io::RecordBatchStream,
     plan::{
         logical::join::JoinType,
         physical::plan::{format_exec, ExecutionPlan},
     },
 };
+
+const DEFAULT_BATCH_SIZE: usize = 1024;
 
 pub type JoinOn = Vec<(Arc<dyn PhysicalExpression>, Arc<dyn PhysicalExpression>)>;
 
@@ -27,13 +26,13 @@ pub enum JoinSide {
     Right,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct JoinColumnIndex {
     index: usize,
     side: JoinSide,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JoinFilter {
     schema: SchemaRef,
     expression: Arc<dyn PhysicalExpression>,
@@ -219,8 +218,43 @@ impl ExecutionPlan for HashJoinExec {
         vec![self.lhs.as_ref(), self.rhs.as_ref()]
     }
 
-    fn execute(&self) -> Result<crate::io::RecordBatchStream> {
-        todo!()
+    fn execute(&self) -> Result<RecordBatchStream> {
+        let on_left = self
+            .on
+            .iter()
+            .map(|expr| expr.0.clone())
+            .collect::<Vec<_>>();
+        let on_right = self
+            .on
+            .iter()
+            .map(|expr| expr.1.clone())
+            .collect::<Vec<_>>();
+
+        let probe_input = self.rhs.execute()?;
+        let projected_column_indices = match &self.projection {
+            None => self.column_indices.clone(),
+            Some(proj) => proj
+                .iter()
+                .map(|i| self.column_indices[*i].clone())
+                .collect(),
+        };
+
+        let stream = HashJoinStream {
+            schema: self.schema(),
+            on_left,
+            on_right,
+            filter: self.filter.clone(),
+            join_type: self.join_type,
+            build_side: BuildSideState::Initial,
+            probe_input,
+            column_indices: projected_column_indices,
+            state: HashJoinStreamState::WaitBuildSide,
+            batch_size: DEFAULT_BATCH_SIZE,
+            hashes: vec![],
+            random_state: self.random_state.clone(),
+        };
+
+        Ok(stream.boxed())
     }
 
     fn format(&self) -> String {
@@ -270,7 +304,8 @@ enum HashJoinStreamState {
 struct HashJoinStream {
     /// The input schema.
     schema: SchemaRef,
-    on: JoinOn,
+    on_left: Vec<Arc<dyn PhysicalExpression>>,
+    on_right: Vec<Arc<dyn PhysicalExpression>>,
     filter: Option<JoinFilter>,
     join_type: JoinType,
     build_side: BuildSideState,
