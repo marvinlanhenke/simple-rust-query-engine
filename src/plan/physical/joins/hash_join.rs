@@ -1,9 +1,15 @@
-use std::{any::Any, collections::HashSet, fmt::Display, sync::Arc, task::Poll};
+use std::{
+    any::Any,
+    collections::{HashMap, HashSet},
+    fmt::Display,
+    sync::Arc,
+    task::{ready, Poll},
+};
 
 use ahash::RandomState;
-use arrow_array::RecordBatch;
-use arrow_schema::{Schema, SchemaBuilder, SchemaRef};
-use futures::{ready, Stream, StreamExt};
+use arrow_array::{Int64Array, RecordBatch, StringArray};
+use arrow_schema::{DataType, Field, Schema, SchemaBuilder, SchemaRef};
+use futures::{future::BoxFuture, FutureExt, Stream, StreamExt};
 use snafu::location;
 
 use crate::{
@@ -37,6 +43,12 @@ pub struct JoinFilter {
     schema: SchemaRef,
     expression: Arc<dyn PhysicalExpression>,
     column_indices: Vec<JoinColumnIndex>,
+}
+
+#[derive(Debug)]
+struct JoinLeftData {
+    map: HashMap<u64, u64>,
+    batch: RecordBatch,
 }
 
 #[derive(Debug)]
@@ -203,6 +215,24 @@ impl HashJoinExec {
             None => Ok(()),
         }
     }
+
+    async fn collect_left_input() -> Result<JoinLeftData> {
+        // TODO: this is just dummy data
+        let schema = Schema::new(vec![
+            Field::new("c1", DataType::Utf8, true),
+            Field::new("c2", DataType::Int64, true),
+            Field::new("c3", DataType::Int64, true),
+        ]);
+        let utf_arr = Arc::new(StringArray::from(vec!["hello", "world"]));
+        let int_arr1 = Arc::new(Int64Array::from(vec![1, 2]));
+        let int_arr2 = Arc::new(Int64Array::from(vec![11, 22]));
+        let batch = RecordBatch::try_new(Arc::new(schema), vec![utf_arr, int_arr1, int_arr2])?;
+
+        Ok(JoinLeftData {
+            map: HashMap::new(),
+            batch,
+        })
+    }
 }
 
 impl ExecutionPlan for HashJoinExec {
@@ -236,13 +266,15 @@ impl ExecutionPlan for HashJoinExec {
             Some(proj) => proj.iter().map(|i| self.column_indices[*i]).collect(),
         };
 
+        let build_input_future = async move { Self::collect_left_input().await }.boxed();
+
         let stream = HashJoinStream {
             schema: self.schema(),
             on_left,
             on_right,
             filter: self.filter.clone(),
             join_type: self.join_type,
-            build_side: BuildSideState::Initial,
+            build_side: BuildSideState::Initial(build_input_future),
             probe_input,
             column_indices: projected_column_indices,
             state: HashJoinStreamState::WaitBuildSide,
@@ -285,9 +317,23 @@ impl ProcessProbeBatchState {
     }
 }
 
+type BuildInputFuture = BoxFuture<'static, Result<JoinLeftData>>;
+
 enum BuildSideState {
-    Initial,
-    Ready,
+    Initial(BuildInputFuture),
+    Ready(Arc<JoinLeftData>),
+}
+
+impl BuildSideState {
+    fn try_as_init_mut(&mut self) -> Result<&mut BuildInputFuture> {
+        match self {
+            BuildSideState::Initial(fut) => Ok(fut),
+            _ => Err(Error::InvalidOperation {
+                message: "Expected build side in initial state".to_string(),
+                location: location!(),
+            }),
+        }
+    }
 }
 
 /// Represents the stream result.
@@ -365,7 +411,15 @@ impl HashJoinStream {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<StreamResultState<Option<RecordBatch>>>> {
-        todo!()
+        let left_data = match self.build_side.try_as_init_mut()?.poll_unpin(cx) {
+            Poll::Ready(left_data) => left_data?,
+            Poll::Pending => return Poll::Pending,
+        };
+
+        self.state = HashJoinStreamState::FetchProbeBatch;
+        self.build_side = BuildSideState::Ready(Arc::new(left_data));
+
+        Poll::Ready(Ok(StreamResultState::Continue))
     }
 
     fn fetch_probe_batch(
@@ -406,11 +460,37 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        expression::physical::column::ColumnExpr, plan::logical::join::JoinType,
+        expression::physical::column::ColumnExpr,
+        io::reader::csv::options::CsvFileOpenerConfig,
+        plan::{
+            logical::join::JoinType,
+            physical::{plan::ExecutionPlan, scan::csv::CsvExec},
+        },
         tests::create_schema,
     };
 
-    use super::HashJoinExec;
+    use super::{HashJoinExec, JoinOn};
+
+    #[tokio::test]
+    async fn test_dummy() {
+        let schema = Arc::new(create_schema());
+        let lhs = CsvExec::new(
+            "testdata/csv/simple.csv",
+            CsvFileOpenerConfig::new(schema.clone()),
+        );
+        let rhs = CsvExec::new(
+            "testdata/csv/simple.csv",
+            CsvFileOpenerConfig::new(schema.clone()),
+        );
+        let on: JoinOn = vec![(
+            Arc::new(ColumnExpr::new("c1", 0)),
+            Arc::new(ColumnExpr::new("c1", 0)),
+        )];
+        let exec =
+            HashJoinExec::try_new(Arc::new(lhs), Arc::new(rhs), on, None, JoinType::Left, None)
+                .unwrap();
+        let _ = exec.execute().unwrap();
+    }
 
     #[test]
     fn test_is_valid_projection() {
