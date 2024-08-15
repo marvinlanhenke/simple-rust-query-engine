@@ -1,15 +1,23 @@
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
-    fmt::Display,
+    fmt::{Debug, Display},
     sync::Arc,
     task::{ready, Poll},
 };
 
+use arrow_array::Array;
+
 use ahash::RandomState;
-use arrow_array::{Int64Array, RecordBatch, StringArray};
-use arrow_schema::{DataType, Field, Schema, SchemaBuilder, SchemaRef};
-use futures::{future::BoxFuture, FutureExt, Stream, StreamExt};
+use arrow::{
+    array::downcast_array, compute::concat_batches, datatypes::ArrowPrimitiveType,
+    downcast_primitive_array,
+};
+use arrow_array::{
+    ArrayAccessor, ArrayRef, BooleanArray, PrimitiveArray, RecordBatch, StringArray,
+};
+use arrow_schema::{DataType, Schema, SchemaBuilder, SchemaRef};
+use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryStreamExt};
 use snafu::location;
 
 use crate::{
@@ -20,6 +28,7 @@ use crate::{
         logical::join::JoinType,
         physical::plan::{format_exec, ExecutionPlan},
     },
+    utils::HashValue,
 };
 
 const DEFAULT_BATCH_SIZE: usize = 1024;
@@ -216,22 +225,124 @@ impl HashJoinExec {
         }
     }
 
-    async fn collect_left_input() -> Result<JoinLeftData> {
-        // TODO: this is just dummy data
-        let schema = Schema::new(vec![
-            Field::new("c1", DataType::Utf8, true),
-            Field::new("c2", DataType::Int64, true),
-            Field::new("c3", DataType::Int64, true),
-        ]);
-        let utf_arr = Arc::new(StringArray::from(vec!["hello", "world"]));
-        let int_arr1 = Arc::new(Int64Array::from(vec![1, 2]));
-        let int_arr2 = Arc::new(Int64Array::from(vec![11, 22]));
-        let batch = RecordBatch::try_new(Arc::new(schema), vec![utf_arr, int_arr1, int_arr2])?;
+    async fn collect_build_input(
+        lhs: Arc<dyn ExecutionPlan>,
+        lhs_on: Vec<Arc<dyn PhysicalExpression>>,
+        random_state: RandomState,
+    ) -> Result<JoinLeftData> {
+        let schema = lhs.schema();
+        let stream = lhs.execute()?;
 
-        Ok(JoinLeftData {
-            map: HashMap::new(),
-            batch,
-        })
+        let init = (Vec::new(), 0);
+        let (batches, num_rows) = stream
+            .try_fold(init, |mut acc, batch| async {
+                acc.1 += batch.num_rows();
+                acc.0.push(batch);
+                Ok(acc)
+            })
+            .await?;
+
+        let mut map: HashMap<u64, u64> = HashMap::with_capacity(num_rows);
+        let mut hashes_buffer: Vec<u64> = Vec::new();
+
+        let input_batches = batches.iter().rev();
+        for batch in input_batches.clone() {
+            hashes_buffer.clear();
+            hashes_buffer.resize(batch.num_rows(), 0);
+            Self::update_hash(&lhs_on, batch, &mut map, &mut hashes_buffer, &random_state)?;
+        }
+        let batch = concat_batches(&schema, input_batches)?;
+
+        Ok(JoinLeftData { map, batch })
+    }
+
+    fn update_hash(
+        on: &[Arc<dyn PhysicalExpression>],
+        batch: &RecordBatch,
+        map: &mut HashMap<u64, u64>,
+        hashes_buffer: &mut Vec<u64>,
+        random_state: &RandomState,
+    ) -> Result<()> {
+        // Evaluate the join-on key expressions in order
+        // to obtain the actual join-on values as an Vec<ArrayRef>
+        let keys = on
+            .iter()
+            .map(|expr| expr.eval(batch)?.into_array(batch.num_rows()))
+            .collect::<Result<Vec<_>>>()?;
+
+        // Next, we need to hash the join-on values.
+        let hash_values = Self::create_hashes(&keys, hashes_buffer, random_state)?;
+
+        // TODO: Handle hash_collisions, otherwise we cannot track
+        // rows that have the same hashvalue but map to different row indices.
+        for (row_idx, hash) in hash_values.iter().enumerate() {
+            map.insert(*hash, row_idx as u64);
+        }
+
+        Ok(())
+    }
+
+    fn create_hashes<'a>(
+        arrays: &[ArrayRef],
+        hashes_buffer: &'a mut Vec<u64>,
+        random_state: &RandomState,
+    ) -> Result<&'a mut Vec<u64>> {
+        for col in arrays.iter() {
+            let array = col.as_ref();
+
+            downcast_primitive_array!(
+                array => Self::hash_primitive_array(array, hashes_buffer, random_state),
+                DataType::Null =>
+                    hashes_buffer
+                    .iter_mut()
+                    .for_each(|hash| *hash = random_state.hash_one(1)),
+                DataType::Boolean => {
+                    let array = downcast_array::<BooleanArray>(array);
+                    Self::hash_array(&array, hashes_buffer, random_state);
+                }
+                DataType::Utf8 => {
+                    let array = downcast_array::<StringArray>(array);
+                    Self::hash_array(&array, hashes_buffer, random_state);
+                }
+                other => return Err(
+                    Error::InvalidOperation {
+                        message: format!("data type {} not supported in hasher", other),
+                        location: location!()
+                    })
+            );
+        }
+        Ok(hashes_buffer)
+    }
+
+    /// Hashes non-null values of an array, updating the hash buffer.
+    fn hash_array<T>(array: T, hashes_buffer: &mut [u64], random_state: &RandomState)
+    where
+        T: ArrayAccessor,
+        T::Item: HashValue,
+    {
+        for (idx, hash) in hashes_buffer.iter_mut().enumerate() {
+            if !array.is_null(idx) {
+                let value = array.value(idx);
+                *hash = value.hash_one(random_state);
+            }
+        }
+    }
+
+    /// Specifically hashes values in a primitive array, considering nullability.
+    fn hash_primitive_array<T>(
+        array: &PrimitiveArray<T>,
+        hashes_buffer: &mut [u64],
+        random_state: &RandomState,
+    ) where
+        T: ArrowPrimitiveType,
+        <T as arrow_array::ArrowPrimitiveType>::Native: HashValue,
+    {
+        for (idx, hash) in hashes_buffer.iter_mut().enumerate() {
+            if !array.is_null(idx) {
+                let value = array.value(idx);
+                *hash = value.hash_one(random_state);
+            }
+        }
     }
 }
 
@@ -266,7 +377,11 @@ impl ExecutionPlan for HashJoinExec {
             Some(proj) => proj.iter().map(|i| self.column_indices[*i]).collect(),
         };
 
-        let build_input_future = async move { Self::collect_left_input().await }.boxed();
+        let lhs = self.lhs.clone();
+        let lhs_on = on_left.clone();
+        let random_state = self.random_state.clone();
+        let build_input_future =
+            async move { Self::collect_build_input(lhs, lhs_on, random_state).await }.boxed();
 
         let stream = HashJoinStream {
             schema: self.schema(),
@@ -416,6 +531,8 @@ impl HashJoinStream {
             Poll::Pending => return Poll::Pending,
         };
 
+        println!("{left_data:?}");
+
         self.state = HashJoinStreamState::FetchProbeBatch;
         self.build_side = BuildSideState::Ready(Arc::new(left_data));
 
@@ -459,6 +576,8 @@ impl Stream for HashJoinStream {
 mod tests {
     use std::sync::Arc;
 
+    use futures::StreamExt;
+
     use crate::{
         expression::physical::column::ColumnExpr,
         io::reader::csv::options::CsvFileOpenerConfig,
@@ -489,7 +608,11 @@ mod tests {
         let exec =
             HashJoinExec::try_new(Arc::new(lhs), Arc::new(rhs), on, None, JoinType::Left, None)
                 .unwrap();
-        let _ = exec.execute().unwrap();
+        let mut stream = exec.execute().unwrap();
+
+        if let Some(batch_res) = stream.next().await {
+            println!("{batch_res:?}");
+        }
     }
 
     #[test]
