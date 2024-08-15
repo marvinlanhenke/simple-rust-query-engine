@@ -181,8 +181,28 @@ impl HashJoinExec {
         (Arc::new(fields.finish()), column_indices)
     }
 
+    /// Checks if the given projection is valid.
     fn is_valid_projection(schema: &Schema, projection: Option<&Vec<usize>>) -> Result<()> {
-        todo!()
+        match projection {
+            Some(cols) => {
+                if cols
+                    .iter()
+                    .max()
+                    .map_or(false, |idx| *idx >= schema.fields().len())
+                {
+                    Err(Error::InvalidData {
+                        message: format!(
+                            "project index {} out of bounds",
+                            cols.iter().max().unwrap()
+                        ),
+                        location: location!(),
+                    })
+                } else {
+                    Ok(())
+                }
+            }
+            None => Ok(()),
+        }
     }
 }
 
@@ -295,6 +315,17 @@ mod tests {
     };
 
     use super::HashJoinExec;
+
+    #[test]
+    fn test_is_valid_projection() {
+        let schema = create_schema();
+
+        let result = HashJoinExec::is_valid_projection(&schema, Some(&vec![0, 1, 2]));
+        assert!(result.is_ok());
+
+        let result = HashJoinExec::is_valid_projection(&schema, Some(&vec![0, 1, 4]));
+        assert!(result.is_err());
+    }
 
     #[test]
     fn test_create_join_schema() {
