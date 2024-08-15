@@ -3,7 +3,7 @@ use std::{any::Any, collections::HashSet, fmt::Display, sync::Arc, task::Poll};
 use ahash::RandomState;
 use arrow_array::RecordBatch;
 use arrow_schema::{Schema, SchemaBuilder, SchemaRef};
-use futures::{Stream, StreamExt};
+use futures::{ready, Stream, StreamExt};
 use snafu::location;
 
 use crate::{
@@ -233,10 +233,7 @@ impl ExecutionPlan for HashJoinExec {
         let probe_input = self.rhs.execute()?;
         let projected_column_indices = match &self.projection {
             None => self.column_indices.clone(),
-            Some(proj) => proj
-                .iter()
-                .map(|i| self.column_indices[*i].clone())
-                .collect(),
+            Some(proj) => proj.iter().map(|i| self.column_indices[*i]).collect(),
         };
 
         let stream = HashJoinStream {
@@ -293,6 +290,24 @@ enum BuildSideState {
     Ready,
 }
 
+/// Represents the stream result.
+/// Indicated whether the stream produced a result that is ready for use
+/// or if the operation is required to continue.
+enum StreamResultState<T> {
+    Ready(T),
+    Continue,
+}
+
+macro_rules! handle_stream_result {
+    ($e: expr) => {
+        match $e {
+            Ok(StreamResultState::Continue) => continue,
+            Ok(StreamResultState::Ready(res)) => Poll::Ready(Ok(res).transpose()),
+            Err(e) => Poll::Ready(Some(Err(e))),
+        }
+    };
+}
+
 enum HashJoinStreamState {
     WaitBuildSide,
     FetchProbeBatch,
@@ -325,6 +340,52 @@ impl HashJoinStream {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Result<RecordBatch>>> {
+        use HashJoinStreamState::*;
+
+        loop {
+            return match self.state {
+                WaitBuildSide => {
+                    handle_stream_result!(ready!(self.collect_build_side(cx)))
+                }
+                FetchProbeBatch => {
+                    handle_stream_result!(ready!(self.fetch_probe_batch(cx)))
+                }
+                ProcessProbeBatch(_) => {
+                    handle_stream_result!(self.process_probe_batch(cx))
+                }
+                ExhaustedProbeSide => {
+                    handle_stream_result!(self.process_unmatched_build_batch(cx))
+                }
+                Completed => Poll::Ready(None),
+            };
+        }
+    }
+
+    fn collect_build_side(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<StreamResultState<Option<RecordBatch>>>> {
+        todo!()
+    }
+
+    fn fetch_probe_batch(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<StreamResultState<Option<RecordBatch>>>> {
+        todo!()
+    }
+
+    fn process_probe_batch(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Result<StreamResultState<Option<RecordBatch>>> {
+        todo!()
+    }
+
+    fn process_unmatched_build_batch(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Result<StreamResultState<Option<RecordBatch>>> {
         todo!()
     }
 }
