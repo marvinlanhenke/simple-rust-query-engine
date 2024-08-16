@@ -5,11 +5,16 @@ use futures::TryStreamExt;
 
 use crate::{
     error::Result,
-    expression::logical::expr::Expression,
+    expression::logical::{expr::Expression, expr_fn::col},
     plan::{
         logical::{
-            aggregate::Aggregate, filter::Filter, limit::Limit, plan::LogicalPlan,
-            projection::Projection, sort::Sort,
+            aggregate::Aggregate,
+            filter::Filter,
+            join::{Join, JoinType},
+            limit::Limit,
+            plan::LogicalPlan,
+            projection::Projection,
+            sort::Sort,
         },
         planner::Planner,
     },
@@ -88,6 +93,25 @@ impl DataFrame {
     pub fn limit(self, skip: usize, fetch: Option<usize>) -> Self {
         let input = self.plan;
         let plan = LogicalPlan::Limit(Limit::new(Arc::new(input), skip, fetch));
+
+        Self { plan }
+    }
+
+    pub fn join(
+        self,
+        rhs: DataFrame,
+        join_type: JoinType,
+        on_left: &[&str],
+        on_right: &[&str],
+        filter: Option<Expression>,
+    ) -> Self {
+        let lhs = Arc::new(self.plan);
+        let rhs = Arc::new(rhs.plan);
+        let left_keys = on_left.iter().map(|name| col(name.to_string()));
+        let right_keys = on_right.iter().map(|name| col(name.to_string()));
+        let on = left_keys.zip(right_keys).collect::<Vec<_>>();
+
+        let plan = LogicalPlan::Join(Join::new(lhs, rhs, on, join_type, filter));
 
         Self { plan }
     }

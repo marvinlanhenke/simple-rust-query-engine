@@ -42,6 +42,24 @@ pub struct Join {
 }
 
 impl Join {
+    pub fn new(
+        lhs: Arc<LogicalPlan>,
+        rhs: Arc<LogicalPlan>,
+        on: Vec<(Expression, Expression)>,
+        join_type: JoinType,
+        filter: Option<Expression>,
+    ) -> Self {
+        let schema = Self::create_join_schema(lhs.schema(), rhs.schema(), &join_type);
+        Self {
+            lhs,
+            rhs,
+            on,
+            join_type,
+            filter,
+            schema,
+        }
+    }
+
     pub fn try_new_with_projection(
         original: &LogicalPlan,
         lhs: Arc<LogicalPlan>,
