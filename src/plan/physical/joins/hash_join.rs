@@ -8,10 +8,13 @@ use std::{
 
 use ahash::RandomState;
 use arrow::{
-    array::{UInt32BufferBuilder, UInt64BufferBuilder},
-    compute::concat_batches,
+    array::{as_boolean_array, downcast_array, UInt32BufferBuilder, UInt64BufferBuilder},
+    compute::{self, concat_batches},
 };
-use arrow_array::{PrimitiveArray, RecordBatch, UInt32Array, UInt64Array};
+use arrow_array::{
+    new_null_array, Array, ArrayRef, PrimitiveArray, RecordBatch, RecordBatchOptions, UInt32Array,
+    UInt64Array,
+};
 use arrow_schema::{Schema, SchemaBuilder, SchemaRef};
 use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryStreamExt};
 use snafu::location;
@@ -32,7 +35,7 @@ const DEFAULT_BATCH_SIZE: usize = 1024;
 
 pub type JoinOn = Vec<(Arc<dyn PhysicalExpression>, Arc<dyn PhysicalExpression>)>;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinSide {
     Left,
     Right,
@@ -449,7 +452,7 @@ impl HashJoinStream {
                     handle_stream_result!(ready!(self.fetch_probe_batch(cx)))
                 }
                 ProcessProbeBatch(_) => {
-                    handle_stream_result!(self.process_probe_batch(cx))
+                    handle_stream_result!(self.process_probe_batch())
                 }
                 ExhaustedProbeSide => {
                     handle_stream_result!(self.process_unmatched_build_batch(cx))
@@ -496,32 +499,34 @@ impl HashJoinStream {
         Poll::Ready(Ok(StreamResultState::Continue))
     }
 
-    fn process_probe_batch(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> Result<StreamResultState<Option<RecordBatch>>> {
+    fn process_probe_batch(&mut self) -> Result<StreamResultState<Option<RecordBatch>>> {
         let build_side = self.build_side.try_as_ready_mut()?;
+        let map = &build_side.map;
+        let build_batch = &build_side.batch;
+        let probe_batch = self.state.try_as_process_probe_batch()?;
 
         // get matched join-key indices, check for equal rows
         // apply join filters if exists
         // build output batch from indices
-        let map = &build_side.map;
-        let build_batch = &build_side.batch;
-        let probe_batch = self.state.try_as_process_probe_batch()?;
-        let build_values = self
-            .on_left
-            .iter()
-            .map(|expr| expr.eval(build_batch)?.into_array(build_batch.num_rows()))
-            .collect::<Result<Vec<_>>>()?;
-        let probe_values = self
-            .on_right
-            .iter()
-            .map(|expr| expr.eval(probe_batch)?.into_array(probe_batch.num_rows()))
-            .collect::<Result<Vec<_>>>()?;
         let (build_indices, probe_indices) =
             Self::get_matched_join_key_indices(map, &self.hashes_buffer)?;
-        let (build_indices, probe_indices) = Self::apply_join_filter()?;
-        let result = Self::build_batch_from_indices()?;
+        let (build_indices, probe_indices) = Self::apply_join_filter(
+            &self.filter,
+            build_indices,
+            probe_indices,
+            build_batch,
+            probe_batch,
+            JoinSide::Left,
+        )?;
+        let result = Self::build_batch_from_indices(
+            self.schema.clone(),
+            build_batch,
+            probe_batch,
+            &build_indices,
+            &probe_indices,
+            &self.column_indices,
+            JoinSide::Left,
+        )?;
 
         self.state = HashJoinStreamState::FetchProbeBatch;
 
@@ -547,12 +552,92 @@ impl HashJoinStream {
         Ok((build_indices, probe_indices))
     }
 
-    fn apply_join_filter() -> Result<(UInt64Array, UInt32Array)> {
-        todo!()
+    fn apply_join_filter(
+        filter: &Option<JoinFilter>,
+        build_indices: UInt64Array,
+        probe_indices: UInt32Array,
+        build_batch: &RecordBatch,
+        probe_batch: &RecordBatch,
+        side: JoinSide,
+    ) -> Result<(UInt64Array, UInt32Array)> {
+        if build_indices.is_empty() && probe_indices.is_empty() {
+            return Ok((build_indices, probe_indices));
+        }
+
+        if let Some(filter) = filter {
+            // build intermediate batch
+            // evaluate filter expr -> boolean mask
+            // apply filter mask to build and probe indices
+            let intermediate_batch = Self::build_batch_from_indices(
+                filter.schema.clone(),
+                build_batch,
+                probe_batch,
+                &build_indices,
+                &probe_indices,
+                filter.column_indices.as_slice(),
+                side,
+            )?;
+            let filter_result = filter
+                .expression
+                .eval(&intermediate_batch)?
+                .into_array(intermediate_batch.num_rows())?;
+            let filter_mask = as_boolean_array(&filter_result);
+            let build_filtered = compute::filter(&build_indices, filter_mask)?;
+            let probe_filtered = compute::filter(&probe_indices, filter_mask)?;
+
+            Ok((
+                downcast_array(build_filtered.as_ref()),
+                downcast_array(probe_filtered.as_ref()),
+            ))
+        } else {
+            Ok((build_indices, probe_indices))
+        }
     }
 
-    fn build_batch_from_indices() -> Result<RecordBatch> {
-        todo!()
+    fn build_batch_from_indices(
+        schema: SchemaRef,
+        build_batch: &RecordBatch,
+        probe_batch: &RecordBatch,
+        build_indices: &UInt64Array,
+        probe_indices: &UInt32Array,
+        column_indices: &[JoinColumnIndex],
+        side: JoinSide,
+    ) -> Result<RecordBatch> {
+        if schema.fields().is_empty() {
+            let options = RecordBatchOptions::new()
+                .with_match_field_names(true)
+                .with_row_count(Some(build_indices.len()));
+            return Ok(RecordBatch::try_new_with_options(
+                schema.clone(),
+                vec![],
+                &options,
+            )?);
+        }
+
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
+        for col_idx in column_indices {
+            let array = match col_idx.side == side {
+                true => {
+                    let array = build_batch.column(col_idx.index);
+                    if array.is_empty() || build_indices.null_count() == build_indices.len() {
+                        new_null_array(array.data_type(), build_indices.len())
+                    } else {
+                        compute::take(array.as_ref(), build_indices, None)?
+                    }
+                }
+                false => {
+                    let array = probe_batch.column(col_idx.index);
+                    if array.is_empty() || probe_indices.null_count() == probe_indices.len() {
+                        new_null_array(array.data_type(), probe_indices.len())
+                    } else {
+                        compute::take(array.as_ref(), probe_indices, None)?
+                    }
+                }
+            };
+            columns.push(array);
+        }
+
+        Ok(RecordBatch::try_new(schema, columns)?)
     }
 
     fn process_unmatched_build_batch(
@@ -578,6 +663,7 @@ impl Stream for HashJoinStream {
 mod tests {
     use std::sync::Arc;
 
+    use arrow_schema::{DataType, Field, Schema};
     use futures::StreamExt;
 
     use crate::{
@@ -594,18 +680,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_dummy() {
-        let schema = Arc::new(create_schema());
+        let left_schema = Arc::new(Schema::new(vec![
+            Field::new("l1", DataType::Utf8, true),
+            Field::new("l2", DataType::Int64, true),
+            Field::new("l3", DataType::Int64, true),
+        ]));
         let lhs = CsvExec::new(
-            "testdata/csv/simple.csv",
-            CsvFileOpenerConfig::new(schema.clone()),
+            "testdata/csv/join_left.csv",
+            CsvFileOpenerConfig::new(left_schema),
         );
+        let right_schema = Arc::new(Schema::new(vec![
+            Field::new("r1", DataType::Utf8, true),
+            Field::new("r2", DataType::Int64, true),
+            Field::new("r3", DataType::Int64, true),
+        ]));
         let rhs = CsvExec::new(
-            "testdata/csv/simple.csv",
-            CsvFileOpenerConfig::new(schema.clone()),
+            "testdata/csv/join_right.csv",
+            CsvFileOpenerConfig::new(right_schema),
         );
         let on: JoinOn = vec![(
-            Arc::new(ColumnExpr::new("c1", 0)),
-            Arc::new(ColumnExpr::new("c1", 0)),
+            Arc::new(ColumnExpr::new("l1", 0)),
+            Arc::new(ColumnExpr::new("r1", 0)),
         )];
         let exec =
             HashJoinExec::try_new(Arc::new(lhs), Arc::new(rhs), on, None, JoinType::Left, None)
