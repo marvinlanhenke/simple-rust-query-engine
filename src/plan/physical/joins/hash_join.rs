@@ -455,7 +455,7 @@ impl HashJoinStream {
                     handle_stream_result!(self.process_probe_batch())
                 }
                 ExhaustedProbeSide => {
-                    handle_stream_result!(self.process_unmatched_build_batch(cx))
+                    handle_stream_result!(self.process_unmatched_build_batch())
                 }
                 Completed => Poll::Ready(None),
             };
@@ -509,7 +509,7 @@ impl HashJoinStream {
         // apply join filters if exists
         // build output batch from indices
         let (build_indices, probe_indices) =
-            Self::get_matched_join_key_indices(map, &self.hashes_buffer)?;
+            Self::get_matched_join_key_indices(map, &self.hashes_buffer, self.batch_size)?;
         let (build_indices, probe_indices) = Self::apply_join_filter(
             &self.filter,
             build_indices,
@@ -536,13 +536,19 @@ impl HashJoinStream {
     fn get_matched_join_key_indices(
         map: &HashMap<u64, u64>,
         hashes_buffer: &[u64],
+        batch_size: usize,
     ) -> Result<(UInt64Array, UInt32Array)> {
         let mut build_indices_builder = UInt64BufferBuilder::new(0);
         let mut probe_indices_builder = UInt32BufferBuilder::new(0);
+        let mut processed_rows = 0;
         for (probe_idx, hash_value) in hashes_buffer.iter().enumerate() {
+            if processed_rows >= batch_size {
+                break;
+            }
             if let Some(build_idx) = map.get(hash_value) {
                 build_indices_builder.append(*build_idx);
                 probe_indices_builder.append(probe_idx as u32);
+                processed_rows += 1;
             }
         }
         let build_indices: UInt64Array =
@@ -640,10 +646,12 @@ impl HashJoinStream {
         Ok(RecordBatch::try_new(schema, columns)?)
     }
 
-    fn process_unmatched_build_batch(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> Result<StreamResultState<Option<RecordBatch>>> {
+    fn process_unmatched_build_batch(&mut self) -> Result<StreamResultState<Option<RecordBatch>>> {
+        if !matches!(self.join_type, JoinType::Left) {
+            self.state = HashJoinStreamState::Completed;
+            return Ok(StreamResultState::Continue);
+        }
+
         todo!()
     }
 }
