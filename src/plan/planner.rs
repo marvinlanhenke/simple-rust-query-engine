@@ -25,8 +25,12 @@ use crate::{
     plan::{
         logical::plan::LogicalPlan,
         physical::{
-            aggregate::AggregateExec, filter::FilterExec, limit::LimitExec,
-            projection::ProjectionExec, sorts::sort::SortExec,
+            aggregate::AggregateExec,
+            filter::FilterExec,
+            joins::hash_join::{HashJoinExec, JoinOn},
+            limit::LimitExec,
+            projection::ProjectionExec,
+            sorts::sort::SortExec,
         },
     },
 };
@@ -123,7 +127,42 @@ impl Planner {
 
                 Ok(Arc::new(LimitExec::new(physical_input, skip, fetch)))
             }
-            Join(_) => todo!(),
+            Join(plan) => {
+                let lhs = Self::create_physical_plan(plan.lhs())?;
+                let rhs = Self::create_physical_plan(plan.rhs())?;
+                let join_type = plan.join_type();
+
+                let on = plan
+                    .on()
+                    .iter()
+                    .map(|exprs| {
+                        let on_left = Self::create_physical_expression(plan.lhs(), &exprs.0)?;
+                        let on_right = Self::create_physical_expression(plan.rhs(), &exprs.1)?;
+                        Ok((on_left, on_right))
+                    })
+                    .collect::<Result<JoinOn>>()?;
+
+                let filter = match plan.filter() {
+                    Some(_expr) => {
+                        // get columns from expression
+                        // collect left & right field indices, map over cols get idx from
+                        // left/right schema.
+                        // create left/right fields from indices and left/right schema
+                        // construct filter_schema
+                        // eval logical filter_expr -> physical filter expr
+                        // build JoinColumnIndices
+                        // create JoinFilter
+                        todo!()
+                    }
+                    None => None,
+                };
+
+                // TODO: if no 'join-on' condition we should use NestedLoopJoin
+                // which has yet to be implemented.
+                Ok(Arc::new(HashJoinExec::try_new(
+                    lhs, rhs, on, filter, join_type,
+                )?))
+            }
         }
     }
 

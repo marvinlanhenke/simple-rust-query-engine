@@ -1,12 +1,8 @@
 use std::{fmt::Display, sync::Arc};
 
 use arrow_schema::{FieldRef, Schema, SchemaRef};
-use snafu::location;
 
-use crate::{
-    error::{Error, Result},
-    expression::logical::{column::Column, expr::Expression},
-};
+use crate::expression::logical::expr::Expression;
 
 use super::plan::LogicalPlan;
 
@@ -60,37 +56,24 @@ impl Join {
         }
     }
 
-    pub fn try_new_with_projection(
-        original: &LogicalPlan,
-        lhs: Arc<LogicalPlan>,
-        rhs: Arc<LogicalPlan>,
-        on: (Vec<Column>, Vec<Column>),
-    ) -> Result<Self> {
-        let original_join = match original {
-            LogicalPlan::Join(join) => join,
-            _ => {
-                return Err(Error::InvalidOperation {
-                    message: "Cannot create 'Join' plan with projected input".to_string(),
-                    location: location!(),
-                })
-            }
-        };
+    pub fn lhs(&self) -> &LogicalPlan {
+        &self.lhs
+    }
 
-        let on =
-            on.0.into_iter()
-                .zip(on.1)
-                .map(|(l, r)| (Expression::Column(l), Expression::Column(r)))
-                .collect::<Vec<_>>();
-        let schema = Self::create_join_schema(lhs.schema(), rhs.schema(), &original_join.join_type);
+    pub fn rhs(&self) -> &LogicalPlan {
+        &self.rhs
+    }
 
-        Ok(Self {
-            lhs,
-            rhs,
-            on,
-            filter: original_join.filter.clone(),
-            join_type: original_join.join_type,
-            schema,
-        })
+    pub fn on(&self) -> &[(Expression, Expression)] {
+        &self.on
+    }
+
+    pub fn join_type(&self) -> JoinType {
+        self.join_type
+    }
+
+    pub fn filter(&self) -> Option<&Expression> {
+        self.filter.as_ref()
     }
 
     /// The output schema.

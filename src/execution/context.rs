@@ -9,7 +9,7 @@ use crate::{
 use super::dataframe::DataFrame;
 
 /// Represents a [`SessionContext`] for managing query execution.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct SessionContext;
 
 impl SessionContext {

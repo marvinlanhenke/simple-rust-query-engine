@@ -125,6 +125,7 @@ mod tests {
         execution::context::SessionContext,
         expression::logical::expr_fn::{avg, col, count, lit, max, min, sort, sum},
         io::reader::csv::options::CsvReadOptions,
+        plan::logical::join::JoinType,
     };
 
     use super::DataFrame;
@@ -134,6 +135,34 @@ mod tests {
         let results = pretty::pretty_format_batches(&results).unwrap().to_string();
         let results = results.trim().lines().collect::<Vec<_>>();
         assert_eq!(results, expected);
+    }
+
+    #[tokio::test]
+    async fn test_dataframe_left_join_no_filters() {
+        let ctx = SessionContext::new();
+
+        let lhs = ctx
+            .read_csv("testdata/csv/join_left.csv", CsvReadOptions::new())
+            .unwrap();
+        let rhs = ctx
+            .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = lhs.join(rhs, JoinType::Left, &["l1"], &["r1"], None);
+
+        let expected = vec![
+            "+----+----+----+----+-----+------+",
+            "| l1 | l2 | l3 | r1 | r2  | r3   |",
+            "+----+----+----+----+-----+------+",
+            "| a  | 1  | 10 | a  | 100 | 1000 |",
+            "| b  | 2  | 20 | b  | 200 | 2000 |",
+            "| c  | 3  | 30 | c  | 300 | 3000 |",
+            "| d  | 4  | 40 |    |     |      |",
+            "| e  | 5  | 50 |    |     |      |",
+            "| f  | 6  | 60 |    |     |      |",
+            "+----+----+----+----+-----+------+",
+        ];
+        assert_df_results(&df, expected).await;
     }
 
     #[tokio::test]
