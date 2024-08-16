@@ -8,7 +8,10 @@ use std::{
 
 use ahash::RandomState;
 use arrow::{
-    array::{as_boolean_array, downcast_array, UInt32BufferBuilder, UInt64BufferBuilder},
+    array::{
+        as_boolean_array, downcast_array, BooleanBufferBuilder, UInt32BufferBuilder, UInt32Builder,
+        UInt64BufferBuilder,
+    },
     compute::{self, concat_batches},
 };
 use arrow_array::{
@@ -54,10 +57,26 @@ pub struct JoinFilter {
     column_indices: Vec<JoinColumnIndex>,
 }
 
+impl JoinFilter {
+    pub fn new(
+        schema: SchemaRef,
+        expression: Arc<dyn PhysicalExpression>,
+        column_indices: Vec<JoinColumnIndex>,
+    ) -> JoinFilter {
+        JoinFilter {
+            expression,
+            column_indices,
+            schema,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct JoinLeftData {
     map: HashMap<u64, u64>,
     batch: RecordBatch,
+    /// Bitmap builder for visited left indices.
+    visited: BooleanBufferBuilder,
 }
 
 #[derive(Debug)]
@@ -69,7 +88,6 @@ pub struct HashJoinExec {
     join_type: JoinType,
     /// The output schema, after the join operation.
     schema: SchemaRef,
-    projection: Option<Vec<usize>>,
     column_indices: Vec<JoinColumnIndex>,
     random_state: RandomState,
 }
@@ -81,7 +99,6 @@ impl HashJoinExec {
         on: JoinOn,
         filter: Option<JoinFilter>,
         join_type: JoinType,
-        projection: Option<Vec<usize>>,
     ) -> Result<Self> {
         if on.is_empty() {
             return Err(Error::InvalidData {
@@ -98,8 +115,6 @@ impl HashJoinExec {
         let (schema, column_indices) =
             Self::create_join_schema(&left_schema, &right_schema, &join_type);
 
-        Self::is_valid_projection(&schema, projection.as_ref())?;
-
         Ok(Self {
             lhs,
             rhs,
@@ -107,7 +122,6 @@ impl HashJoinExec {
             filter,
             join_type,
             schema,
-            projection,
             column_indices,
             random_state: RandomState::new(),
         })
@@ -201,30 +215,6 @@ impl HashJoinExec {
         (Arc::new(fields.finish()), column_indices)
     }
 
-    /// Checks if the given projection is valid.
-    fn is_valid_projection(schema: &Schema, projection: Option<&Vec<usize>>) -> Result<()> {
-        match projection {
-            Some(cols) => {
-                if cols
-                    .iter()
-                    .max()
-                    .map_or(false, |idx| *idx >= schema.fields().len())
-                {
-                    Err(Error::InvalidData {
-                        message: format!(
-                            "project index {} out of bounds",
-                            cols.iter().max().unwrap()
-                        ),
-                        location: location!(),
-                    })
-                } else {
-                    Ok(())
-                }
-            }
-            None => Ok(()),
-        }
-    }
-
     async fn collect_build_input(
         lhs: Arc<dyn ExecutionPlan>,
         lhs_on: Vec<Arc<dyn PhysicalExpression>>,
@@ -252,8 +242,14 @@ impl HashJoinExec {
             Self::update_hash(&lhs_on, batch, &mut map, &mut hashes_buffer, &random_state)?;
         }
         let batch = concat_batches(&schema, input_batches)?;
+        let mut visited = BooleanBufferBuilder::new(batch.num_rows());
+        visited.append_n(num_rows, false);
 
-        Ok(JoinLeftData { map, batch })
+        Ok(JoinLeftData {
+            map,
+            batch,
+            visited,
+        })
     }
 
     /// Updates `JoinHashMap` by evaluating and hashing the `join-on` key expressions.
@@ -307,10 +303,6 @@ impl ExecutionPlan for HashJoinExec {
             .collect::<Vec<_>>();
 
         let probe_input = self.rhs.execute()?;
-        let projected_column_indices = match &self.projection {
-            None => self.column_indices.clone(),
-            Some(proj) => proj.iter().map(|i| self.column_indices[*i]).collect(),
-        };
 
         let lhs = self.lhs.clone();
         let lhs_on = on_left.clone();
@@ -320,13 +312,13 @@ impl ExecutionPlan for HashJoinExec {
 
         let stream = HashJoinStream {
             schema: self.schema(),
-            on_left,
             on_right,
             filter: self.filter.clone(),
             join_type: self.join_type,
             build_side: BuildSideState::Initial(build_input_future),
             probe_input,
-            column_indices: projected_column_indices,
+            probe_schema: self.rhs.schema(),
+            column_indices: self.column_indices.clone(),
             state: HashJoinStreamState::WaitBuildSide,
             batch_size: DEFAULT_BATCH_SIZE,
             hashes_buffer: vec![],
@@ -354,7 +346,7 @@ type BuildInputFuture = BoxFuture<'static, Result<JoinLeftData>>;
 
 enum BuildSideState {
     Initial(BuildInputFuture),
-    Ready(Arc<JoinLeftData>),
+    Ready(JoinLeftData),
 }
 
 impl BuildSideState {
@@ -368,7 +360,7 @@ impl BuildSideState {
         }
     }
 
-    fn try_as_ready_mut(&mut self) -> Result<&mut Arc<JoinLeftData>> {
+    fn try_as_ready_mut(&mut self) -> Result<&mut JoinLeftData> {
         match self {
             BuildSideState::Ready(join_left_data) => Ok(join_left_data),
             _ => Err(Error::InvalidOperation {
@@ -420,13 +412,13 @@ impl HashJoinStreamState {
 struct HashJoinStream {
     /// The input schema.
     schema: SchemaRef,
-    on_left: Vec<Arc<dyn PhysicalExpression>>,
     on_right: Vec<Arc<dyn PhysicalExpression>>,
     filter: Option<JoinFilter>,
     join_type: JoinType,
     build_side: BuildSideState,
     /// The right (probe) input stream.
     probe_input: RecordBatchStream,
+    probe_schema: SchemaRef,
     column_indices: Vec<JoinColumnIndex>,
     state: HashJoinStreamState,
     /// Maximum output batch size.
@@ -472,7 +464,7 @@ impl HashJoinStream {
         };
 
         self.state = HashJoinStreamState::FetchProbeBatch;
-        self.build_side = BuildSideState::Ready(Arc::new(left_data));
+        self.build_side = BuildSideState::Ready(left_data);
 
         Poll::Ready(Ok(StreamResultState::Continue))
     }
@@ -504,6 +496,7 @@ impl HashJoinStream {
         let map = &build_side.map;
         let build_batch = &build_side.batch;
         let probe_batch = self.state.try_as_process_probe_batch()?;
+        let visited = &mut build_side.visited;
 
         // get matched join-key indices, check for equal rows
         // apply join filters if exists
@@ -518,6 +511,11 @@ impl HashJoinStream {
             probe_batch,
             JoinSide::Left,
         )?;
+        if matches!(self.join_type, JoinType::Left) {
+            build_indices.iter().flatten().for_each(|x| {
+                visited.set_bit(x as usize, true);
+            });
+        }
         let result = Self::build_batch_from_indices(
             self.schema.clone(),
             build_batch,
@@ -652,7 +650,32 @@ impl HashJoinStream {
             return Ok(StreamResultState::Continue);
         }
 
-        todo!()
+        let build_side = self.build_side.try_as_ready_mut()?;
+        let build_batch = &build_side.batch;
+        let build_size = build_side.visited.len();
+
+        let build_indices_unmatched = (0..build_size)
+            .filter_map(|idx| (!build_side.visited.get_bit(idx)).then_some(idx as u64))
+            .collect::<UInt64Array>();
+
+        let mut builder = UInt32Builder::with_capacity(build_indices_unmatched.len());
+        builder.append_nulls(build_indices_unmatched.len());
+        let probe_indices = builder.finish();
+        let probe_batch = RecordBatch::new_empty(self.probe_schema.clone());
+
+        let result = Self::build_batch_from_indices(
+            self.schema.clone(),
+            build_batch,
+            &probe_batch,
+            &build_indices_unmatched,
+            &probe_indices,
+            &self.column_indices,
+            JoinSide::Left,
+        )?;
+
+        self.state = HashJoinStreamState::Completed;
+
+        Ok(StreamResultState::Ready(Some(result)))
     }
 }
 
@@ -671,23 +694,35 @@ impl Stream for HashJoinStream {
 mod tests {
     use std::sync::Arc;
 
+    use arrow::compute::concat_batches;
     use arrow_schema::{DataType, Field, Schema};
     use futures::StreamExt;
 
     use crate::{
-        expression::physical::column::ColumnExpr,
+        expression::{
+            operator::Operator,
+            physical::{binary::BinaryExpr, column::ColumnExpr, literal::LiteralExpr},
+            values::ScalarValue,
+        },
         io::reader::csv::options::CsvFileOpenerConfig,
         plan::{
             logical::join::JoinType,
-            physical::{plan::ExecutionPlan, scan::csv::CsvExec},
+            physical::{
+                joins::hash_join::{JoinColumnIndex, JoinSide},
+                plan::ExecutionPlan,
+                scan::csv::CsvExec,
+            },
         },
         tests::create_schema,
     };
 
-    use super::{HashJoinExec, JoinOn};
+    use super::{HashJoinExec, JoinFilter, JoinOn};
 
-    #[tokio::test]
-    async fn test_dummy() {
+    fn create_hash_join(
+        on: JoinOn,
+        join_type: JoinType,
+        filter: Option<JoinFilter>,
+    ) -> HashJoinExec {
         let left_schema = Arc::new(Schema::new(vec![
             Field::new("l1", DataType::Utf8, true),
             Field::new("l2", DataType::Int64, true),
@@ -706,29 +741,116 @@ mod tests {
             "testdata/csv/join_right.csv",
             CsvFileOpenerConfig::new(right_schema),
         );
+
+        HashJoinExec::try_new(Arc::new(lhs), Arc::new(rhs), on, filter, join_type).unwrap()
+    }
+    #[tokio::test]
+    async fn test_inner_join_with_filter() {
         let on: JoinOn = vec![(
             Arc::new(ColumnExpr::new("l1", 0)),
             Arc::new(ColumnExpr::new("r1", 0)),
         )];
-        let exec =
-            HashJoinExec::try_new(Arc::new(lhs), Arc::new(rhs), on, None, JoinType::Left, None)
-                .unwrap();
+        let intermediate_schema =
+            Arc::new(Schema::new(vec![Field::new("r2", DataType::Int64, true)]));
+        let column_indices = vec![JoinColumnIndex {
+            index: 1,
+            side: JoinSide::Right,
+        }];
+        let expression = Arc::new(BinaryExpr::new(
+            Arc::new(ColumnExpr::new("r2", 0)),
+            Operator::NotEq,
+            Arc::new(LiteralExpr::new(ScalarValue::Int64(Some(100)))),
+        ));
+        let filter = JoinFilter::new(intermediate_schema, expression, column_indices);
+        let exec = create_hash_join(on, JoinType::Inner, Some(filter));
+        let schema = exec.schema();
+
         let mut stream = exec.execute().unwrap();
 
-        if let Some(batch_res) = stream.next().await {
-            println!("{batch_res:?}");
+        let mut batches = Vec::new();
+        while let Some(Ok(batch)) = stream.next().await {
+            batches.push(batch);
         }
+
+        let final_batch = concat_batches(&schema, batches.iter()).unwrap();
+        assert_eq!(final_batch.num_rows(), 2);
+        assert_eq!(final_batch.num_columns(), 6);
     }
 
-    #[test]
-    fn test_is_valid_projection() {
-        let schema = create_schema();
+    #[tokio::test]
+    async fn test_inner_join_no_filter() {
+        let on: JoinOn = vec![(
+            Arc::new(ColumnExpr::new("l1", 0)),
+            Arc::new(ColumnExpr::new("r1", 0)),
+        )];
+        let exec = create_hash_join(on, JoinType::Inner, None);
+        let schema = exec.schema();
 
-        let result = HashJoinExec::is_valid_projection(&schema, Some(&vec![0, 1, 2]));
-        assert!(result.is_ok());
+        let mut stream = exec.execute().unwrap();
 
-        let result = HashJoinExec::is_valid_projection(&schema, Some(&vec![0, 1, 4]));
-        assert!(result.is_err());
+        let mut batches = Vec::new();
+        while let Some(Ok(batch)) = stream.next().await {
+            batches.push(batch);
+        }
+
+        let final_batch = concat_batches(&schema, batches.iter()).unwrap();
+        assert_eq!(final_batch.num_rows(), 3);
+        assert_eq!(final_batch.num_columns(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_left_join_with_filter() {
+        let on: JoinOn = vec![(
+            Arc::new(ColumnExpr::new("l1", 0)),
+            Arc::new(ColumnExpr::new("r1", 0)),
+        )];
+        let intermediate_schema =
+            Arc::new(Schema::new(vec![Field::new("l2", DataType::Int64, true)]));
+        let column_indices = vec![JoinColumnIndex {
+            index: 1,
+            side: JoinSide::Left,
+        }];
+        let expression = Arc::new(BinaryExpr::new(
+            Arc::new(ColumnExpr::new("l2", 0)),
+            Operator::NotEq,
+            Arc::new(LiteralExpr::new(ScalarValue::Int64(Some(1)))),
+        ));
+        let filter = JoinFilter::new(intermediate_schema, expression, column_indices);
+        let exec = create_hash_join(on, JoinType::Left, Some(filter));
+        let schema = exec.schema();
+
+        let mut stream = exec.execute().unwrap();
+
+        let mut batches = Vec::new();
+        while let Some(Ok(batch)) = stream.next().await {
+            println!("{batch:?}");
+            batches.push(batch);
+        }
+
+        let final_batch = concat_batches(&schema, batches.iter()).unwrap();
+        assert_eq!(final_batch.num_rows(), 6);
+        assert_eq!(final_batch.num_columns(), 6);
+    }
+
+    #[tokio::test]
+    async fn test_left_join_no_filter() {
+        let on: JoinOn = vec![(
+            Arc::new(ColumnExpr::new("l1", 0)),
+            Arc::new(ColumnExpr::new("r1", 0)),
+        )];
+        let exec = create_hash_join(on, JoinType::Left, None);
+        let schema = exec.schema();
+
+        let mut stream = exec.execute().unwrap();
+
+        let mut batches = Vec::new();
+        while let Some(Ok(batch)) = stream.next().await {
+            batches.push(batch);
+        }
+
+        let final_batch = concat_batches(&schema, batches.iter()).unwrap();
+        assert_eq!(final_batch.num_rows(), 6);
+        assert_eq!(final_batch.num_columns(), 6);
     }
 
     #[test]
