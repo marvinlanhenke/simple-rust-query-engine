@@ -7,8 +7,11 @@ use std::{
 };
 
 use ahash::RandomState;
-use arrow::compute::concat_batches;
-use arrow_array::RecordBatch;
+use arrow::{
+    array::{UInt32BufferBuilder, UInt64BufferBuilder},
+    compute::concat_batches,
+};
+use arrow_array::{PrimitiveArray, RecordBatch, UInt32Array, UInt64Array};
 use arrow_schema::{Schema, SchemaBuilder, SchemaRef};
 use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryStreamExt};
 use snafu::location;
@@ -344,23 +347,6 @@ impl Display for HashJoinExec {
     }
 }
 
-type JoinHashMapOffset = (usize, Option<u64>);
-
-struct ProcessProbeBatchState {
-    batch: RecordBatch,
-    offset: JoinHashMapOffset,
-    joined_probe_index: Option<usize>,
-}
-
-impl ProcessProbeBatchState {
-    fn advance(&mut self, offset: JoinHashMapOffset, joined_probe_index: Option<usize>) {
-        self.offset = offset;
-        if joined_probe_index.is_some() {
-            self.joined_probe_index = joined_probe_index
-        }
-    }
-}
-
 type BuildInputFuture = BoxFuture<'static, Result<JoinLeftData>>;
 
 enum BuildSideState {
@@ -374,6 +360,16 @@ impl BuildSideState {
             BuildSideState::Initial(fut) => Ok(fut),
             _ => Err(Error::InvalidOperation {
                 message: "Expected build side in initial state".to_string(),
+                location: location!(),
+            }),
+        }
+    }
+
+    fn try_as_ready_mut(&mut self) -> Result<&mut Arc<JoinLeftData>> {
+        match self {
+            BuildSideState::Ready(join_left_data) => Ok(join_left_data),
+            _ => Err(Error::InvalidOperation {
+                message: "Expected build side in ready state".to_string(),
                 location: location!(),
             }),
         }
@@ -401,9 +397,21 @@ macro_rules! handle_stream_result {
 enum HashJoinStreamState {
     WaitBuildSide,
     FetchProbeBatch,
-    ProcessProbeBatch(ProcessProbeBatchState),
+    ProcessProbeBatch(RecordBatch),
     ExhaustedProbeSide,
     Completed,
+}
+
+impl HashJoinStreamState {
+    fn try_as_process_probe_batch(&self) -> Result<&RecordBatch> {
+        match self {
+            HashJoinStreamState::ProcessProbeBatch(batch) => Ok(batch),
+            _ => Err(Error::InvalidOperation {
+                message: "Expected stream in processing state".to_string(),
+                location: location!(),
+            }),
+        }
+    }
 }
 
 struct HashJoinStream {
@@ -481,11 +489,7 @@ impl HashJoinStream {
                 self.hashes_buffer.clear();
                 self.hashes_buffer.resize(batch.num_rows(), 0);
                 create_hashes(&keys, &mut self.hashes_buffer, &self.random_state)?;
-                self.state = HashJoinStreamState::ProcessProbeBatch(ProcessProbeBatchState {
-                    batch,
-                    offset: (0, None),
-                    joined_probe_index: None,
-                });
+                self.state = HashJoinStreamState::ProcessProbeBatch(batch);
             }
             Some(Err(e)) => return Poll::Ready(Err(e)),
         };
@@ -496,6 +500,58 @@ impl HashJoinStream {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Result<StreamResultState<Option<RecordBatch>>> {
+        let build_side = self.build_side.try_as_ready_mut()?;
+
+        // get matched join-key indices, check for equal rows
+        // apply join filters if exists
+        // build output batch from indices
+        let map = &build_side.map;
+        let build_batch = &build_side.batch;
+        let probe_batch = self.state.try_as_process_probe_batch()?;
+        let build_values = self
+            .on_left
+            .iter()
+            .map(|expr| expr.eval(build_batch)?.into_array(build_batch.num_rows()))
+            .collect::<Result<Vec<_>>>()?;
+        let probe_values = self
+            .on_right
+            .iter()
+            .map(|expr| expr.eval(probe_batch)?.into_array(probe_batch.num_rows()))
+            .collect::<Result<Vec<_>>>()?;
+        let (build_indices, probe_indices) =
+            Self::get_matched_join_key_indices(map, &self.hashes_buffer)?;
+        let (build_indices, probe_indices) = Self::apply_join_filter()?;
+        let result = Self::build_batch_from_indices()?;
+
+        self.state = HashJoinStreamState::FetchProbeBatch;
+
+        Ok(StreamResultState::Ready(Some(result)))
+    }
+
+    fn get_matched_join_key_indices(
+        map: &HashMap<u64, u64>,
+        hashes_buffer: &[u64],
+    ) -> Result<(UInt64Array, UInt32Array)> {
+        let mut build_indices_builder = UInt64BufferBuilder::new(0);
+        let mut probe_indices_builder = UInt32BufferBuilder::new(0);
+        for (probe_idx, hash_value) in hashes_buffer.iter().enumerate() {
+            if let Some(build_idx) = map.get(hash_value) {
+                build_indices_builder.append(*build_idx);
+                probe_indices_builder.append(probe_idx as u32);
+            }
+        }
+        let build_indices: UInt64Array =
+            PrimitiveArray::new(build_indices_builder.finish().into(), None);
+        let probe_indices: UInt32Array =
+            PrimitiveArray::new(probe_indices_builder.finish().into(), None);
+        Ok((build_indices, probe_indices))
+    }
+
+    fn apply_join_filter() -> Result<(UInt64Array, UInt32Array)> {
+        todo!()
+    }
+
+    fn build_batch_from_indices() -> Result<RecordBatch> {
         todo!()
     }
 
