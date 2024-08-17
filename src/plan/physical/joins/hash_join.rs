@@ -78,7 +78,6 @@ impl JoinFilter {
 }
 
 type JoinHashMapOffset = (usize, Option<u64>);
-type JoinHashMapEntry = (usize, u64);
 
 #[derive(Debug)]
 struct JoinHashMap {
@@ -87,24 +86,22 @@ struct JoinHashMap {
 }
 
 impl JoinHashMap {
-    fn new() -> Self {
+    fn with_capacity(capacity: usize) -> Self {
         Self {
-            map: HashMap::new(),
-            next: vec![],
+            map: HashMap::with_capacity(capacity),
+            next: vec![0; capacity + 1],
         }
     }
 
-    fn update(&mut self, entries: &[JoinHashMapEntry]) {
-        self.next.resize(entries.len() + 1, 0);
-
-        for (row_idx, hash_value) in entries {
+    fn update_from_iter<'a>(&mut self, iter: impl Iterator<Item = (usize, &'a u64)>) {
+        for (row_idx, hash_value) in iter {
             if let Some(index) = self.map.get_mut(hash_value) {
                 // Entry already exists.
                 // Add index to next array and store new value inside hashmap.
                 // Update chained list with previous value.
                 let prev_index = *index;
                 *index = (row_idx + 1) as u64;
-                self.next[*row_idx] = prev_index;
+                self.next[row_idx] = prev_index;
             } else {
                 self.map.insert(*hash_value, (row_idx + 1) as u64);
             }
@@ -211,8 +208,7 @@ impl JoinHashMap {
 
 #[derive(Debug)]
 struct JoinLeftData {
-    // TODO: impl JoinHashMap, so we can handle hash-collision
-    map: HashMap<u64, u64>,
+    map: JoinHashMap,
     batch: RecordBatch,
     /// Bitmap builder for visited left indices.
     visited: BooleanBufferBuilder,
@@ -371,7 +367,7 @@ impl HashJoinExec {
             })
             .await?;
 
-        let mut map: HashMap<u64, u64> = HashMap::with_capacity(num_rows);
+        let mut map = JoinHashMap::with_capacity(num_rows);
         let mut hashes_buffer: Vec<u64> = Vec::new();
 
         let input_batches = batches.iter().rev();
@@ -395,7 +391,7 @@ impl HashJoinExec {
     fn update_hash(
         on: &[Arc<dyn PhysicalExpression>],
         batch: &RecordBatch,
-        map: &mut HashMap<u64, u64>,
+        map: &mut JoinHashMap,
         hashes_buffer: &mut Vec<u64>,
         random_state: &RandomState,
     ) -> Result<()> {
@@ -405,12 +401,8 @@ impl HashJoinExec {
             .collect::<Result<Vec<_>>>()?;
 
         let hash_values = create_hashes(&keys, hashes_buffer, random_state)?;
-
-        // TODO: Handle hash_collisions, otherwise we cannot track
-        // rows that have the same hashvalue but map to different row indices.
-        for (row_idx, hash) in hash_values.iter().enumerate() {
-            map.insert(*hash, row_idx as u64);
-        }
+        let iter = hash_values.iter().enumerate();
+        map.update_from_iter(iter);
 
         Ok(())
     }
@@ -528,16 +520,31 @@ macro_rules! handle_stream_result {
     };
 }
 
+struct ProcessProbeBatchState {
+    batch: RecordBatch,
+    offset: JoinHashMapOffset,
+    joined_probe_index: Option<usize>,
+}
+
+impl ProcessProbeBatchState {
+    fn advance(&mut self, offset: JoinHashMapOffset, joined_probe_index: Option<usize>) {
+        self.offset = offset;
+        if joined_probe_index.is_some() {
+            self.joined_probe_index = joined_probe_index;
+        }
+    }
+}
+
 enum HashJoinStreamState {
     WaitBuildSide,
     FetchProbeBatch,
-    ProcessProbeBatch(RecordBatch),
+    ProcessProbeBatch(ProcessProbeBatchState),
     ExhaustedProbeSide,
     Completed,
 }
 
 impl HashJoinStreamState {
-    fn try_as_process_probe_batch(&self) -> Result<&RecordBatch> {
+    fn try_as_process_probe_batch(&mut self) -> Result<&mut ProcessProbeBatchState> {
         match self {
             HashJoinStreamState::ProcessProbeBatch(batch) => Ok(batch),
             _ => Err(Error::InvalidOperation {
@@ -623,7 +630,11 @@ impl HashJoinStream {
                 self.hashes_buffer.clear();
                 self.hashes_buffer.resize(batch.num_rows(), 0);
                 create_hashes(&keys, &mut self.hashes_buffer, &self.random_state)?;
-                self.state = HashJoinStreamState::ProcessProbeBatch(batch);
+                self.state = HashJoinStreamState::ProcessProbeBatch(ProcessProbeBatchState {
+                    batch,
+                    offset: (0, None),
+                    joined_probe_index: None,
+                });
             }
             Some(Err(e)) => return Poll::Ready(Err(e)),
         };
@@ -640,14 +651,19 @@ impl HashJoinStream {
         // get matched join-key indices, check for equal rows
         // apply join filters if exists
         // build output batch from indices
-        let (build_indices, probe_indices) =
-            Self::get_matched_join_key_indices(map, &self.hashes_buffer, self.batch_size)?;
+        let (build_indices, probe_indices, next_offset) = Self::get_matched_join_key_indices(
+            map,
+            &self.hashes_buffer,
+            self.batch_size,
+            probe_batch.offset,
+        )?;
+
         let (build_indices, probe_indices) = Self::apply_join_filter(
             &self.filter,
             build_indices,
             probe_indices,
             build_batch,
-            probe_batch,
+            &probe_batch.batch,
             JoinSide::Left,
         )?;
         if matches!(self.join_type, JoinType::Left) {
@@ -658,41 +674,40 @@ impl HashJoinStream {
         let result = Self::build_batch_from_indices(
             self.schema.clone(),
             build_batch,
-            probe_batch,
+            &probe_batch.batch,
             &build_indices,
             &probe_indices,
             &self.column_indices,
             JoinSide::Left,
         )?;
 
-        self.state = HashJoinStreamState::FetchProbeBatch;
+        let joined_probe_index = match probe_indices.len() {
+            0 => None,
+            n => Some(probe_indices.value(n - 1) as usize),
+        };
+
+        if let Some(next_offset) = next_offset {
+            probe_batch.advance(next_offset, joined_probe_index)
+        } else {
+            self.state = HashJoinStreamState::FetchProbeBatch;
+        }
 
         Ok(StreamResultState::Ready(Some(result)))
     }
 
     fn get_matched_join_key_indices(
-        map: &HashMap<u64, u64>,
+        map: &JoinHashMap,
         hashes_buffer: &[u64],
         batch_size: usize,
-    ) -> Result<(UInt64Array, UInt32Array)> {
-        let mut build_indices_builder = UInt64BufferBuilder::new(0);
-        let mut probe_indices_builder = UInt32BufferBuilder::new(0);
-        let mut processed_rows = 0;
-        for (probe_idx, hash_value) in hashes_buffer.iter().enumerate() {
-            if processed_rows >= batch_size {
-                break;
-            }
-            if let Some(build_idx) = map.get(hash_value) {
-                build_indices_builder.append(*build_idx);
-                probe_indices_builder.append(probe_idx as u32);
-                processed_rows += 1;
-            }
-        }
-        let build_indices: UInt64Array =
-            PrimitiveArray::new(build_indices_builder.finish().into(), None);
-        let probe_indices: UInt32Array =
-            PrimitiveArray::new(probe_indices_builder.finish().into(), None);
-        Ok((build_indices, probe_indices))
+        offset: JoinHashMapOffset,
+    ) -> Result<(UInt64Array, UInt32Array, Option<JoinHashMapOffset>)> {
+        let (mut probe_indices, mut build_indices, next_offset) =
+            map.get_matched_indices(hashes_buffer, offset, batch_size);
+        let build_indices: UInt64Array = PrimitiveArray::new(build_indices.finish().into(), None);
+        let probe_indices: UInt32Array = PrimitiveArray::new(probe_indices.finish().into(), None);
+
+        // TODO: compare rows `equal_rows_arr`
+        Ok((build_indices, probe_indices, next_offset))
     }
 
     fn apply_join_filter(
@@ -834,7 +849,7 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::compute::{self, concat_batches};
-    use arrow_array::{Array, PrimitiveArray, UInt32Array, UInt64Array};
+    use arrow_array::{PrimitiveArray, UInt32Array, UInt64Array};
     use arrow_schema::{DataType, Field, Schema};
     use futures::StreamExt;
 
@@ -856,7 +871,7 @@ mod tests {
         tests::create_schema,
     };
 
-    use super::{HashJoinExec, JoinFilter, JoinHashMap, JoinHashMapEntry, JoinOn};
+    use super::{HashJoinExec, JoinFilter, JoinHashMap, JoinOn};
 
     fn create_hash_join(
         on: JoinOn,
@@ -887,9 +902,9 @@ mod tests {
 
     #[test]
     fn test_join_hashmap() {
-        let mut hashmap = JoinHashMap::new();
-        let entries: Vec<JoinHashMapEntry> = vec![(1, 10), (2, 20), (3, 10), (4, 10)];
-        hashmap.update(&entries);
+        let mut hashmap = JoinHashMap::with_capacity(4);
+        let values: [(usize, u64); 4] = [(1, 10), (2, 20), (3, 10), (4, 10)];
+        hashmap.update_from_iter(values.iter().map(|(i, v)| (*i, v)));
 
         // map:
         // ---------
