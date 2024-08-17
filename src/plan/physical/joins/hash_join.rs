@@ -6,17 +6,19 @@ use std::{
     task::{ready, Poll},
 };
 
+use arrow_select::take::take;
+
 use ahash::RandomState;
 use arrow::{
     array::{
         as_boolean_array, downcast_array, BooleanBufferBuilder, UInt32BufferBuilder, UInt32Builder,
         UInt64BufferBuilder,
     },
-    compute::{self, concat_batches},
+    compute::{self, and, concat_batches, kernels::cmp::eq, FilterBuilder},
 };
 use arrow_array::{
-    new_null_array, Array, ArrayRef, PrimitiveArray, RecordBatch, RecordBatchOptions, UInt32Array,
-    UInt64Array,
+    new_null_array, Array, ArrayRef, BooleanArray, PrimitiveArray, RecordBatch, RecordBatchOptions,
+    UInt32Array, UInt64Array,
 };
 use arrow_schema::{Schema, SchemaBuilder, SchemaRef};
 use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryStreamExt};
@@ -422,12 +424,12 @@ impl ExecutionPlan for HashJoinExec {
     }
 
     fn execute(&self) -> Result<RecordBatchStream> {
-        let on_left = self
+        let build_on = self
             .on
             .iter()
             .map(|expr| expr.0.clone())
             .collect::<Vec<_>>();
-        let on_right = self
+        let probe_on = self
             .on
             .iter()
             .map(|expr| expr.1.clone())
@@ -436,14 +438,15 @@ impl ExecutionPlan for HashJoinExec {
         let probe_input = self.rhs.execute()?;
 
         let lhs = self.lhs.clone();
-        let lhs_on = on_left.clone();
+        let lhs_on = build_on.clone();
         let random_state = self.random_state.clone();
         let build_input_future =
             async move { Self::collect_build_input(lhs, lhs_on, random_state).await }.boxed();
 
         let stream = HashJoinStream {
             schema: self.schema(),
-            on_right,
+            build_on,
+            probe_on,
             filter: self.filter.clone(),
             join_type: self.join_type,
             build_side: BuildSideState::Initial(build_input_future),
@@ -558,7 +561,8 @@ impl HashJoinStreamState {
 struct HashJoinStream {
     /// The input schema.
     schema: SchemaRef,
-    on_right: Vec<Arc<dyn PhysicalExpression>>,
+    build_on: Vec<Arc<dyn PhysicalExpression>>,
+    probe_on: Vec<Arc<dyn PhysicalExpression>>,
     filter: Option<JoinFilter>,
     join_type: JoinType,
     build_side: BuildSideState,
@@ -623,7 +627,7 @@ impl HashJoinStream {
             None => self.state = HashJoinStreamState::ExhaustedProbeSide,
             Some(Ok(batch)) => {
                 let keys = self
-                    .on_right
+                    .probe_on
                     .iter()
                     .map(|expr| expr.eval(&batch)?.into_array(batch.num_rows()))
                     .collect::<Result<Vec<_>>>()?;
@@ -653,6 +657,10 @@ impl HashJoinStream {
         // build output batch from indices
         let (build_indices, probe_indices, next_offset) = Self::get_matched_join_key_indices(
             map,
+            self.build_on.as_slice(),
+            build_batch,
+            self.probe_on.as_slice(),
+            &probe_batch.batch,
             &self.hashes_buffer,
             self.batch_size,
             probe_batch.offset,
@@ -695,8 +703,13 @@ impl HashJoinStream {
         Ok(StreamResultState::Ready(Some(result)))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn get_matched_join_key_indices(
         map: &JoinHashMap,
+        build_on: &[Arc<dyn PhysicalExpression>],
+        build_batch: &RecordBatch,
+        probe_on: &[Arc<dyn PhysicalExpression>],
+        probe_batch: &RecordBatch,
         hashes_buffer: &[u64],
         batch_size: usize,
         offset: JoinHashMapOffset,
@@ -706,8 +719,63 @@ impl HashJoinStream {
         let build_indices: UInt64Array = PrimitiveArray::new(build_indices.finish().into(), None);
         let probe_indices: UInt32Array = PrimitiveArray::new(probe_indices.finish().into(), None);
 
-        // TODO: compare rows `equal_rows_arr`
+        let (build_indices, probe_indices) = Self::apply_row_equality_filter(
+            build_on,
+            &build_indices,
+            build_batch,
+            probe_on,
+            &probe_indices,
+            probe_batch,
+        )?;
+
         Ok((build_indices, probe_indices, next_offset))
+    }
+
+    fn apply_row_equality_filter(
+        build_on: &[Arc<dyn PhysicalExpression>],
+        build_indices: &UInt64Array,
+        build_batch: &RecordBatch,
+        probe_on: &[Arc<dyn PhysicalExpression>],
+        probe_indices: &UInt32Array,
+        probe_batch: &RecordBatch,
+    ) -> Result<(UInt64Array, UInt32Array)> {
+        let build_arrays = build_on
+            .iter()
+            .map(|expr| expr.eval(build_batch)?.into_array(build_batch.num_rows()))
+            .collect::<Result<Vec<_>>>()?;
+        let probe_arrays = probe_on
+            .iter()
+            .map(|expr| expr.eval(probe_batch)?.into_array(probe_batch.num_rows()))
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut iter = build_arrays.iter().zip(probe_arrays.iter());
+
+        let (first_build, first_probe) = iter.next().ok_or_else(|| Error::InvalidData {
+            message:
+                "At least one build and probe array should be provided for an equality comparison"
+                    .to_string(),
+            location: location!(),
+        })?;
+
+        let build_arr = take(first_build.as_ref(), &build_indices, None)?;
+        let probe_arr = take(first_probe.as_ref(), &probe_indices, None)?;
+        let mut equal_arr: BooleanArray = eq(&build_arr, &probe_arr)?;
+        equal_arr = iter
+            .map(|(build, probe)| {
+                let build_arr = take(build.as_ref(), &build_indices, None)?;
+                let probe_arr = take(probe.as_ref(), &probe_indices, None)?;
+                eq(&build_arr, &probe_arr)
+            })
+            .try_fold(equal_arr, |acc, curr| and(&acc, &curr?))?;
+
+        let equal_filter_builder = FilterBuilder::new(&equal_arr).optimize().build();
+        let build_filtered = equal_filter_builder.filter(&build_indices)?;
+        let probe_filtered = equal_filter_builder.filter(&probe_indices)?;
+
+        Ok((
+            downcast_array(build_filtered.as_ref()),
+            downcast_array(probe_filtered.as_ref()),
+        ))
     }
 
     fn apply_join_filter(
