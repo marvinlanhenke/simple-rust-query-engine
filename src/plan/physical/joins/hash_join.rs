@@ -50,6 +50,12 @@ pub struct JoinColumnIndex {
     side: JoinSide,
 }
 
+impl JoinColumnIndex {
+    pub fn new(index: usize, side: JoinSide) -> Self {
+        Self { index, side }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct JoinFilter {
     schema: SchemaRef,
@@ -73,6 +79,7 @@ impl JoinFilter {
 
 #[derive(Debug)]
 struct JoinLeftData {
+    // TODO: impl JoinHashMap, so we can handle hash-collision
     map: HashMap<u64, u64>,
     batch: RecordBatch,
     /// Bitmap builder for visited left indices.
