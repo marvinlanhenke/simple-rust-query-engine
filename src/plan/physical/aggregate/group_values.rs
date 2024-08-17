@@ -1,18 +1,17 @@
 use std::collections::HashMap;
 
+use snafu::location;
+
 use ahash::RandomState;
 use arrow::{
-    array::{downcast_array, ArrayAccessor, ArrayRef, BooleanArray, PrimitiveArray, StringArray},
-    datatypes::{ArrowPrimitiveType, DataType, SchemaRef},
-    downcast_primitive_array,
+    array::ArrayRef,
+    datatypes::SchemaRef,
     row::{RowConverter, Rows, SortField},
 };
-use arrow_array::Array;
-use snafu::location;
 
 use crate::{
     error::{Error, Result},
-    utils::HashValue,
+    plan::physical::joins::utils::create_hashes,
 };
 
 /// Manages the aggregation of group values within a dataset using a defined grouping schema.
@@ -106,7 +105,11 @@ impl GroupValues {
         };
 
         let group_rows = self.row_converter.convert_columns(cols)?;
-        self.create_hashes(cols, group_rows.num_rows())?;
+
+        let hashes_buffer = &mut self.hashes_buffer;
+        hashes_buffer.clear();
+        hashes_buffer.resize(group_rows.num_rows(), 0);
+        create_hashes(cols, hashes_buffer, &self.random_state)?;
 
         for (row_idx, hash) in self.hashes_buffer.iter().enumerate() {
             let group_idx = match self.map.get_mut(hash) {
@@ -124,67 +127,5 @@ impl GroupValues {
         self.group_values = Some(group_values);
 
         Ok(())
-    }
-
-    /// Generates hashes for each row based on the provided columns,
-    /// supporting various data types.
-    fn create_hashes(&mut self, cols: &[ArrayRef], num_rows: usize) -> Result<()> {
-        self.hashes_buffer.clear();
-        self.hashes_buffer.resize(num_rows, 0);
-
-        for col in cols.iter() {
-            let array = col.as_ref();
-
-            downcast_primitive_array!(
-                array => self.hash_primitive_array(array),
-                DataType::Null => self
-                    .hashes_buffer
-                    .iter_mut()
-                    .for_each(|hash| *hash = self.random_state.hash_one(1)),
-                DataType::Boolean => {
-                    let array = downcast_array::<BooleanArray>(array);
-                    self.hash_array(&array);
-                }
-                DataType::Utf8 => {
-                    let array = downcast_array::<StringArray>(array);
-                    self.hash_array(&array);
-                }
-                other => return Err(
-                    Error::InvalidOperation {
-                        message: format!("data type {} not supported in hasher", other),
-                        location: location!()
-                    })
-            );
-        }
-
-        Ok(())
-    }
-
-    /// Hashes non-null values of an array, updating the hash buffer.
-    fn hash_array<T>(&mut self, array: T)
-    where
-        T: ArrayAccessor,
-        T::Item: HashValue,
-    {
-        for (idx, hash) in self.hashes_buffer.iter_mut().enumerate() {
-            if !array.is_null(idx) {
-                let value = array.value(idx);
-                *hash = value.hash_one(&self.random_state);
-            }
-        }
-    }
-
-    /// Specifically hashes values in a primitive array, considering nullability.
-    fn hash_primitive_array<T>(&mut self, array: &PrimitiveArray<T>)
-    where
-        T: ArrowPrimitiveType,
-        <T as arrow_array::ArrowPrimitiveType>::Native: HashValue,
-    {
-        for (idx, hash) in self.hashes_buffer.iter_mut().enumerate() {
-            if !array.is_null(idx) {
-                let value = array.value(idx);
-                *hash = value.hash_one(&self.random_state);
-            }
-        }
     }
 }
