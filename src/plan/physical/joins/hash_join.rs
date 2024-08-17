@@ -77,6 +77,138 @@ impl JoinFilter {
     }
 }
 
+type JoinHashMapOffset = (usize, Option<u64>);
+type JoinHashMapEntry = (usize, u64);
+
+#[derive(Debug)]
+struct JoinHashMap {
+    map: HashMap<u64, u64>,
+    next: Vec<u64>,
+}
+
+impl JoinHashMap {
+    fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+            next: vec![],
+        }
+    }
+
+    fn update(&mut self, entries: &[JoinHashMapEntry]) {
+        self.next.resize(entries.len() + 1, 0);
+
+        for (row_idx, hash_value) in entries {
+            if let Some(index) = self.map.get_mut(hash_value) {
+                // Entry already exists.
+                // Add index to next array and store new value inside hashmap.
+                // Update chained list with previous value.
+                let prev_index = *index;
+                *index = (row_idx + 1) as u64;
+                self.next[*row_idx] = prev_index;
+            } else {
+                self.map.insert(*hash_value, (row_idx + 1) as u64);
+            }
+        }
+    }
+
+    fn get_matched_indices(
+        &self,
+        hash_values: &[u64],
+        offset: JoinHashMapOffset,
+        limit: usize,
+    ) -> (
+        UInt32BufferBuilder,
+        UInt64BufferBuilder,
+        Option<JoinHashMapOffset>,
+    ) {
+        let mut input_indices = UInt32BufferBuilder::new(0);
+        let mut match_indices = UInt64BufferBuilder::new(0);
+        let mut remaining_output = limit;
+        let hash_map = &self.map;
+        let next_chain = &self.next;
+
+        let to_skip = match offset {
+            (initial_index, None) => initial_index,
+            (initial_index, Some(0)) => initial_index + 1,
+            (initial_index, Some(initial_next_index)) => {
+                let next_offset = Self::chain_traverse(
+                    &mut input_indices,
+                    &mut match_indices,
+                    hash_values,
+                    next_chain,
+                    initial_index,
+                    initial_next_index as usize,
+                    &mut remaining_output,
+                );
+
+                if next_offset.is_some() {
+                    return (input_indices, match_indices, next_offset);
+                }
+
+                initial_index + 1
+            }
+        };
+
+        let mut row_index = to_skip;
+        for hash_value in &hash_values[to_skip..] {
+            if let Some(index) = hash_map.get(hash_value) {
+                let next_offset = Self::chain_traverse(
+                    &mut input_indices,
+                    &mut match_indices,
+                    hash_values,
+                    next_chain,
+                    row_index,
+                    *index as usize,
+                    &mut remaining_output,
+                );
+
+                if next_offset.is_some() {
+                    return (input_indices, match_indices, next_offset);
+                }
+            }
+            row_index += 1;
+        }
+
+        (input_indices, match_indices, None)
+    }
+
+    fn chain_traverse(
+        input_indices: &mut UInt32BufferBuilder,
+        match_indices: &mut UInt64BufferBuilder,
+        hash_values: &[u64],
+        next_chain: &[u64],
+        initial_index: usize,
+        initial_next_index: usize,
+        remaining_output: &mut usize,
+    ) -> Option<JoinHashMapOffset> {
+        let mut match_row_index = initial_next_index - 1;
+
+        loop {
+            match_indices.append(match_row_index as u64);
+            input_indices.append(initial_index as u32);
+            *remaining_output -= 1;
+
+            let next = next_chain[match_row_index];
+
+            if *remaining_output == 0 {
+                // last index, and no more chain values left (indicated by 0).
+                let next_offset = if initial_index == hash_values.len() - 1 && next == 0 {
+                    None
+                } else {
+                    Some((initial_index, Some(next)))
+                };
+                return next_offset;
+            }
+
+            if next == 0 {
+                break;
+            }
+            match_row_index = next as usize - 1;
+        }
+        None
+    }
+}
+
 #[derive(Debug)]
 struct JoinLeftData {
     // TODO: impl JoinHashMap, so we can handle hash-collision
@@ -701,7 +833,8 @@ impl Stream for HashJoinStream {
 mod tests {
     use std::sync::Arc;
 
-    use arrow::compute::concat_batches;
+    use arrow::compute::{self, concat_batches};
+    use arrow_array::{Array, PrimitiveArray, UInt32Array, UInt64Array};
     use arrow_schema::{DataType, Field, Schema};
     use futures::StreamExt;
 
@@ -711,7 +844,7 @@ mod tests {
             physical::{binary::BinaryExpr, column::ColumnExpr, literal::LiteralExpr},
             values::ScalarValue,
         },
-        io::reader::csv::options::CsvFileOpenerConfig,
+        io::reader::csv::{options::CsvFileOpenerConfig, DEFAULT_BATCH_SIZE},
         plan::{
             logical::join::JoinType,
             physical::{
@@ -723,7 +856,7 @@ mod tests {
         tests::create_schema,
     };
 
-    use super::{HashJoinExec, JoinFilter, JoinOn};
+    use super::{HashJoinExec, JoinFilter, JoinHashMap, JoinHashMapEntry, JoinOn};
 
     fn create_hash_join(
         on: JoinOn,
@@ -751,6 +884,39 @@ mod tests {
 
         HashJoinExec::try_new(Arc::new(lhs), Arc::new(rhs), on, filter, join_type).unwrap()
     }
+
+    #[test]
+    fn test_join_hashmap() {
+        let mut hashmap = JoinHashMap::new();
+        let entries: Vec<JoinHashMapEntry> = vec![(1, 10), (2, 20), (3, 10), (4, 10)];
+        hashmap.update(&entries);
+
+        // map:
+        // ---------
+        // | 10 | 5 |
+        // | 20 | 3 |
+        // ---------
+        // next:
+        // ---------------------
+        // | 0 | 0 | 0 | 2 | 4 |
+        // ---------------------
+        assert_eq!(hashmap.map.len(), 2);
+        assert_eq!(hashmap.next.len(), 5);
+        assert_eq!(hashmap.next[4], 4);
+        assert_eq!(hashmap.next[3], 2);
+
+        let (mut input_indices, mut match_indices, next_offset) =
+            hashmap.get_matched_indices(&[10, 20], (0, None), DEFAULT_BATCH_SIZE);
+        let build_indices: UInt64Array = PrimitiveArray::new(match_indices.finish().into(), None);
+        let probe_indices: UInt32Array = PrimitiveArray::new(input_indices.finish().into(), None);
+
+        assert_eq!(build_indices.len(), 4);
+        assert_eq!(probe_indices.len(), 4);
+        assert_eq!(compute::sum(&build_indices), Some(10));
+        assert_eq!(compute::sum(&probe_indices), Some(1));
+        assert!(next_offset.is_none());
+    }
+
     #[tokio::test]
     async fn test_inner_join_with_filter() {
         let on: JoinOn = vec![(
