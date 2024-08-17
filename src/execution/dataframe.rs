@@ -138,6 +138,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_inner_join_with_filters() {
+        let ctx = SessionContext::new();
+
+        let lhs = ctx
+            .read_csv("testdata/csv/join_left.csv", CsvReadOptions::new())
+            .unwrap();
+        let rhs = ctx
+            .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let filter = col("l2").gt(lit(1i64));
+        let df = lhs.join(rhs, JoinType::Inner, &["l1"], &["r1"], Some(filter));
+
+        let expected = vec![
+            "+----+----+----+----+-----+------+",
+            "| l1 | l2 | l3 | r1 | r2  | r3   |",
+            "+----+----+----+----+-----+------+",
+            "| b  | 2  | 20 | b  | 200 | 2000 |",
+            "| c  | 3  | 30 | c  | 300 | 3000 |",
+            "+----+----+----+----+-----+------+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
+    async fn test_dataframe_inner_join_no_filters() {
+        let ctx = SessionContext::new();
+
+        let lhs = ctx
+            .read_csv("testdata/csv/join_left.csv", CsvReadOptions::new())
+            .unwrap();
+        let rhs = ctx
+            .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = lhs.join(rhs, JoinType::Inner, &["l1"], &["r1"], None);
+
+        let expected = vec![
+            "+----+----+----+----+-----+------+",
+            "| l1 | l2 | l3 | r1 | r2  | r3   |",
+            "+----+----+----+----+-----+------+",
+            "| a  | 1  | 10 | a  | 100 | 1000 |",
+            "| b  | 2  | 20 | b  | 200 | 2000 |",
+            "| c  | 3  | 30 | c  | 300 | 3000 |",
+            "+----+----+----+----+-----+------+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
+    async fn test_dataframe_left_join_with_filters() {
+        let ctx = SessionContext::new();
+
+        let lhs = ctx
+            .read_csv("testdata/csv/join_left.csv", CsvReadOptions::new())
+            .unwrap();
+        let rhs = ctx
+            .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let filter = col("l1").neq(lit("a"));
+        let df = lhs.join(rhs, JoinType::Left, &["l1"], &["r1"], Some(filter));
+
+        let expected = vec![
+            "+----+----+----+----+-----+------+",
+            "| l1 | l2 | l3 | r1 | r2  | r3   |",
+            "+----+----+----+----+-----+------+",
+            "| b  | 2  | 20 | b  | 200 | 2000 |",
+            "| c  | 3  | 30 | c  | 300 | 3000 |",
+            "| a  | 1  | 10 |    |     |      |",
+            "| d  | 4  | 40 |    |     |      |",
+            "| e  | 5  | 50 |    |     |      |",
+            "| f  | 6  | 60 |    |     |      |",
+            "+----+----+----+----+-----+------+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_left_join_no_filters() {
         let ctx = SessionContext::new();
 
