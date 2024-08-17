@@ -27,7 +27,10 @@ use crate::{
         physical::{
             aggregate::AggregateExec,
             filter::FilterExec,
-            joins::hash_join::{HashJoinExec, JoinColumnIndex, JoinFilter, JoinOn, JoinSide},
+            joins::{
+                hash_join::HashJoinExec,
+                utils::{JoinColumnIndex, JoinFilter, JoinOn, JoinSide},
+            },
             limit::LimitExec,
             projection::ProjectionExec,
             sorts::sort::SortExec,

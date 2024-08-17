@@ -35,48 +35,9 @@ use crate::{
     utils::create_hashes,
 };
 
+use super::utils::{JoinColumnIndex, JoinFilter, JoinOn, JoinSide};
+
 const DEFAULT_BATCH_SIZE: usize = 1024;
-
-pub type JoinOn = Vec<(Arc<dyn PhysicalExpression>, Arc<dyn PhysicalExpression>)>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JoinSide {
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct JoinColumnIndex {
-    index: usize,
-    side: JoinSide,
-}
-
-impl JoinColumnIndex {
-    pub fn new(index: usize, side: JoinSide) -> Self {
-        Self { index, side }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct JoinFilter {
-    schema: SchemaRef,
-    expression: Arc<dyn PhysicalExpression>,
-    column_indices: Vec<JoinColumnIndex>,
-}
-
-impl JoinFilter {
-    pub fn new(
-        schema: SchemaRef,
-        expression: Arc<dyn PhysicalExpression>,
-        column_indices: Vec<JoinColumnIndex>,
-    ) -> JoinFilter {
-        JoinFilter {
-            expression,
-            column_indices,
-            schema,
-        }
-    }
-}
 
 type JoinHashMapOffset = (usize, Option<u64>);
 
@@ -322,13 +283,7 @@ impl HashJoinExec {
                     .iter()
                     .enumerate()
                     .map(|(index, field)| {
-                        (
-                            field.clone(),
-                            JoinColumnIndex {
-                                index,
-                                side: JoinSide::Left,
-                            },
-                        )
+                        (field.clone(), JoinColumnIndex::new(index, JoinSide::Left))
                     });
                 let right_fields =
                     right_schema
@@ -336,13 +291,7 @@ impl HashJoinExec {
                         .iter()
                         .enumerate()
                         .map(|(index, field)| {
-                            (
-                                field.clone(),
-                                JoinColumnIndex {
-                                    index,
-                                    side: JoinSide::Right,
-                                },
-                            )
+                            (field.clone(), JoinColumnIndex::new(index, JoinSide::Right))
                         });
                 left_fields.chain(right_fields).unzip()
             }
@@ -794,16 +743,16 @@ impl HashJoinStream {
             // evaluate filter expr -> boolean mask
             // apply filter mask to build and probe indices
             let intermediate_batch = Self::build_batch_from_indices(
-                filter.schema.clone(),
+                filter.schema(),
                 build_batch,
                 probe_batch,
                 &build_indices,
                 &probe_indices,
-                filter.column_indices.as_slice(),
+                filter.column_indices(),
                 side,
             )?;
             let filter_result = filter
-                .expression
+                .expression()
                 .eval(&intermediate_batch)?
                 .into_array(intermediate_batch.num_rows())?;
             let filter_mask = as_boolean_array(&filter_result);
@@ -841,9 +790,9 @@ impl HashJoinStream {
 
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
         for col_idx in column_indices {
-            let array = match col_idx.side == side {
+            let array = match col_idx.side() == side {
                 true => {
-                    let array = build_batch.column(col_idx.index);
+                    let array = build_batch.column(col_idx.index());
                     if array.is_empty() || build_indices.null_count() == build_indices.len() {
                         new_null_array(array.data_type(), build_indices.len())
                     } else {
@@ -851,7 +800,7 @@ impl HashJoinStream {
                     }
                 }
                 false => {
-                    let array = probe_batch.column(col_idx.index);
+                    let array = probe_batch.column(col_idx.index());
                     if array.is_empty() || probe_indices.null_count() == probe_indices.len() {
                         new_null_array(array.data_type(), probe_indices.len())
                     } else {
@@ -1007,10 +956,7 @@ mod tests {
         )];
         let intermediate_schema =
             Arc::new(Schema::new(vec![Field::new("r2", DataType::Int64, true)]));
-        let column_indices = vec![JoinColumnIndex {
-            index: 1,
-            side: JoinSide::Right,
-        }];
+        let column_indices = vec![JoinColumnIndex::new(1, JoinSide::Right)];
         let expression = Arc::new(BinaryExpr::new(
             Arc::new(ColumnExpr::new("r2", 0)),
             Operator::NotEq,
@@ -1061,10 +1007,7 @@ mod tests {
         )];
         let intermediate_schema =
             Arc::new(Schema::new(vec![Field::new("l2", DataType::Int64, true)]));
-        let column_indices = vec![JoinColumnIndex {
-            index: 1,
-            side: JoinSide::Left,
-        }];
+        let column_indices = vec![JoinColumnIndex::new(1, JoinSide::Left)];
         let expression = Arc::new(BinaryExpr::new(
             Arc::new(ColumnExpr::new("l2", 0)),
             Operator::NotEq,
