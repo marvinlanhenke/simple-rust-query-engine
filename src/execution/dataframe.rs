@@ -217,6 +217,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_left_join_no_filters_with_collisions() {
+        let ctx = SessionContext::new();
+
+        let lhs = ctx
+            .read_csv("testdata/csv/join_left_2.csv", CsvReadOptions::new())
+            .unwrap();
+        let rhs = ctx
+            .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = lhs.join(rhs, JoinType::Left, &["l1"], &["r1"], None);
+
+        let expected = vec![
+            "+----+----+----+----+-----+------+",
+            "| l1 | l2 | l3 | r1 | r2  | r3   |",
+            "+----+----+----+----+-----+------+",
+            "| a  | 1  | 10 | a  | 100 | 1000 |",
+            "| a  | 1  | 10 | a  | 100 | 1000 |",
+            "| b  | 2  | 20 | b  | 200 | 2000 |",
+            "| c  | 3  | 30 | c  | 300 | 3000 |",
+            "| d  | 4  | 40 |    |     |      |",
+            "| e  | 5  | 50 |    |     |      |",
+            "| f  | 6  | 60 |    |     |      |",
+            "+----+----+----+----+-----+------+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_left_join_no_filters() {
         let ctx = SessionContext::new();
 
