@@ -11,7 +11,7 @@ use arrow::{
 
 use crate::{
     error::{Error, Result},
-    plan::physical::joins::utils::create_hashes,
+    utils::create_hashes,
 };
 
 /// Manages the aggregation of group values within a dataset using a defined grouping schema.

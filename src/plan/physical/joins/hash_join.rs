@@ -32,9 +32,8 @@ use crate::{
         logical::join::JoinType,
         physical::plan::{format_exec, ExecutionPlan},
     },
+    utils::create_hashes,
 };
-
-use super::utils::create_hashes;
 
 const DEFAULT_BATCH_SIZE: usize = 1024;
 
