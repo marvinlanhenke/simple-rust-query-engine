@@ -164,16 +164,46 @@ impl JoinHashMap {
             }
             match_row_index = next as usize - 1;
         }
+
         None
     }
 }
 
+type BuildSideFuture = BoxFuture<'static, Result<BuildSideData>>;
+
 #[derive(Debug)]
-struct JoinLeftData {
+struct BuildSideData {
     map: JoinHashMap,
     batch: RecordBatch,
     /// Bitmap builder for visited left indices.
     visited: BooleanBufferBuilder,
+}
+
+enum BuildSideState {
+    Initial(BuildSideFuture),
+    Ready(BuildSideData),
+}
+
+impl BuildSideState {
+    fn try_as_init_mut(&mut self) -> Result<&mut BuildSideFuture> {
+        match self {
+            BuildSideState::Initial(fut) => Ok(fut),
+            _ => Err(Error::InvalidOperation {
+                message: "Expected build side in initial state".to_string(),
+                location: location!(),
+            }),
+        }
+    }
+
+    fn try_as_ready_mut(&mut self) -> Result<&mut BuildSideData> {
+        match self {
+            BuildSideState::Ready(join_left_data) => Ok(join_left_data),
+            _ => Err(Error::InvalidOperation {
+                message: "Expected build side in ready state".to_string(),
+                location: location!(),
+            }),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -304,7 +334,7 @@ impl HashJoinExec {
         lhs: Arc<dyn ExecutionPlan>,
         lhs_on: Vec<Arc<dyn PhysicalExpression>>,
         random_state: RandomState,
-    ) -> Result<JoinLeftData> {
+    ) -> Result<BuildSideData> {
         let schema = lhs.schema();
         let stream = lhs.execute()?;
 
@@ -330,7 +360,7 @@ impl HashJoinExec {
         let mut visited = BooleanBufferBuilder::new(batch.num_rows());
         visited.append_n(num_rows, false);
 
-        Ok(JoinLeftData {
+        Ok(BuildSideData {
             map,
             batch,
             visited,
@@ -388,7 +418,7 @@ impl ExecutionPlan for HashJoinExec {
         let lhs = self.lhs.clone();
         let lhs_on = build_on.clone();
         let random_state = self.random_state.clone();
-        let build_input_future =
+        let build_side_future =
             async move { Self::collect_build_input(lhs, lhs_on, random_state).await }.boxed();
 
         let stream = HashJoinStream {
@@ -397,7 +427,7 @@ impl ExecutionPlan for HashJoinExec {
             probe_on,
             filter: self.filter.clone(),
             join_type: self.join_type,
-            build_side: BuildSideState::Initial(build_input_future),
+            build_side: BuildSideState::Initial(build_side_future),
             probe_input,
             probe_schema: self.rhs.schema(),
             column_indices: self.column_indices.clone(),
@@ -421,35 +451,6 @@ impl ExecutionPlan for HashJoinExec {
 impl Display for HashJoinExec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         format_exec(self, f, 0)
-    }
-}
-
-type BuildInputFuture = BoxFuture<'static, Result<JoinLeftData>>;
-
-enum BuildSideState {
-    Initial(BuildInputFuture),
-    Ready(JoinLeftData),
-}
-
-impl BuildSideState {
-    fn try_as_init_mut(&mut self) -> Result<&mut BuildInputFuture> {
-        match self {
-            BuildSideState::Initial(fut) => Ok(fut),
-            _ => Err(Error::InvalidOperation {
-                message: "Expected build side in initial state".to_string(),
-                location: location!(),
-            }),
-        }
-    }
-
-    fn try_as_ready_mut(&mut self) -> Result<&mut JoinLeftData> {
-        match self {
-            BuildSideState::Ready(join_left_data) => Ok(join_left_data),
-            _ => Err(Error::InvalidOperation {
-                message: "Expected build side in ready state".to_string(),
-                location: location!(),
-            }),
-        }
     }
 }
 
