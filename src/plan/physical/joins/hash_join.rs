@@ -37,10 +37,42 @@ use crate::{
 
 use super::utils::{JoinColumnIndex, JoinFilter, JoinOn, JoinSide};
 
+/// Default batch size for processing operations in a join operation.
+/// Determines the number of rows processed in each batch, emitted by [`HashJoinExec`].
 const DEFAULT_BATCH_SIZE: usize = 1024;
 
+/// A type alias representing an offset within a [`JoinHashMap`].
+///
+/// The tuple contains:
+/// - `usize`: The index from which to continue the join operation.
+/// - `Option<u64>`: The next chain index, or `None` if no further chaining is needed.
 type JoinHashMapOffset = (usize, Option<u64>);
 
+/// A hash map used in join operations, mapping `u64` hash values to lists of row indices.
+///
+/// This struct handles hash collisions by storing row indices in a separate chained list (`Vec<u64>`).
+/// When multiple rows map to the same hash value, the most recent row index is stored in the hash map,
+/// while previous indices are linked via the `next` vector. The chain ends when the value `0` is reached,
+/// indicating the end of the list.
+///
+/// Note that hash collisions do not guarantee value equality;
+/// such checks must be performed separately outside of `JoinHashMap`.
+///
+/// # Example
+///
+/// Insert (10, 1)         Insert (20, 2)         Insert (10, 3) <-- collision!
+///
+/// map:                   map:                   map:
+/// +--------+             ----------             ----------
+/// | 10 | 2 |             | 10 | 2 |             | 10 | 4 |
+/// +--------+             | 20 | 3 |             | 20 | 3 |
+///                        ----------             ----------
+///
+/// next:                  next:                  next:
+/// +-----------+          +-----------+          +-----------+
+/// | 0 | 0 | 0 |          | 0 | 0 | 0 |          | 0 | 0 | 2 |  <-- hash value 10 maps to 4,2 (indices 3,1)
+/// +-----------+          +-----------+          +-----------+  
+///
 #[derive(Debug)]
 struct JoinHashMap {
     map: HashMap<u64, u64>,
@@ -48,6 +80,7 @@ struct JoinHashMap {
 }
 
 impl JoinHashMap {
+    /// Creates a new [`JoinHashMap`] with a specified capacity.
     fn with_capacity(capacity: usize) -> Self {
         Self {
             map: HashMap::with_capacity(capacity),
@@ -55,21 +88,29 @@ impl JoinHashMap {
         }
     }
 
+    /// Updates the `JoinHashMap` with values from an iterator.
+    ///
+    /// This method processes each `(row index, hash value)` pair, updating the hash map
+    /// and chaining indices to ensure that duplicate hash values are properly linked.
     fn update_from_iter<'a>(&mut self, iter: impl Iterator<Item = (usize, &'a u64)>) {
-        for (row_idx, hash_value) in iter {
-            if let Some(index) = self.map.get_mut(hash_value) {
-                // Entry already exists.
-                // Add index to next array and store new value inside hashmap.
-                // Update chained list with previous value.
-                let prev_index = *index;
-                *index = (row_idx + 1) as u64;
-                self.next[row_idx] = prev_index;
+        for (new_row_index, hash_value) in iter {
+            if let Some(curr_row_index) = self.map.get_mut(hash_value) {
+                // Entry already exists in the map.
+                // Add the current index to the next chain and update the map with the new index.
+                let prev_row_index = *curr_row_index;
+                *curr_row_index = (new_row_index + 1) as u64;
+                self.next[new_row_index] = prev_row_index;
             } else {
-                self.map.insert(*hash_value, (row_idx + 1) as u64);
+                self.map.insert(*hash_value, (new_row_index + 1) as u64);
             }
         }
     }
 
+    /// Retrieves the matched indices based on hash values, with support for offsets and limits.
+    ///
+    /// This method finds all rows that match the provided hash values, respecting any specified
+    /// offsets and limits on the number of results. It returns the matched row indices,
+    /// the corresponding input indices, and an optional offset for further processing.
     fn get_matched_indices(
         &self,
         hash_values: &[u64],
@@ -80,19 +121,22 @@ impl JoinHashMap {
         UInt64BufferBuilder,
         Option<JoinHashMapOffset>,
     ) {
-        let mut input_indices = UInt32BufferBuilder::new(0);
-        let mut match_indices = UInt64BufferBuilder::new(0);
+        let mut probe_indices = UInt32BufferBuilder::new(0);
+        let mut build_indices = UInt64BufferBuilder::new(0);
         let mut remaining_output = limit;
         let hash_map = &self.map;
         let next_chain = &self.next;
 
         let to_skip = match offset {
+            // `initial_index` processing has not started yet.
             (initial_index, None) => initial_index,
+            // `initial_index` has already been processed and should be skipped.
             (initial_index, Some(0)) => initial_index + 1,
+            // otherwise process remaining `initial_index` from previous iteration.
             (initial_index, Some(initial_next_index)) => {
                 let next_offset = Self::chain_traverse(
-                    &mut input_indices,
-                    &mut match_indices,
+                    &mut probe_indices,
+                    &mut build_indices,
                     hash_values,
                     next_chain,
                     initial_index,
@@ -101,7 +145,7 @@ impl JoinHashMap {
                 );
 
                 if next_offset.is_some() {
-                    return (input_indices, match_indices, next_offset);
+                    return (probe_indices, build_indices, next_offset);
                 }
 
                 initial_index + 1
@@ -112,8 +156,8 @@ impl JoinHashMap {
         for hash_value in &hash_values[to_skip..] {
             if let Some(index) = hash_map.get(hash_value) {
                 let next_offset = Self::chain_traverse(
-                    &mut input_indices,
-                    &mut match_indices,
+                    &mut probe_indices,
+                    &mut build_indices,
                     hash_values,
                     next_chain,
                     row_index,
@@ -122,35 +166,40 @@ impl JoinHashMap {
                 );
 
                 if next_offset.is_some() {
-                    return (input_indices, match_indices, next_offset);
+                    return (probe_indices, build_indices, next_offset);
                 }
             }
             row_index += 1;
         }
 
-        (input_indices, match_indices, None)
+        (probe_indices, build_indices, None)
     }
 
+    /// Traverses a chain of matched indices, updating the result buffers and checking limits.
+    ///
+    /// This method follows the chain of indices in the `next_chain` vector, appending matched
+    /// row indices and input indices to the respective buffers. It respects the `remaining_output`
+    /// limit and returns an optional offset for further processing if the limit is reached.
     fn chain_traverse(
-        input_indices: &mut UInt32BufferBuilder,
-        match_indices: &mut UInt64BufferBuilder,
+        probe_indices: &mut UInt32BufferBuilder,
+        build_indices: &mut UInt64BufferBuilder,
         hash_values: &[u64],
         next_chain: &[u64],
         initial_index: usize,
         initial_next_index: usize,
         remaining_output: &mut usize,
     ) -> Option<JoinHashMapOffset> {
-        let mut match_row_index = initial_next_index - 1;
+        let mut build_row_index = initial_next_index - 1;
 
         loop {
-            match_indices.append(match_row_index as u64);
-            input_indices.append(initial_index as u32);
+            build_indices.append(build_row_index as u64);
+            probe_indices.append(initial_index as u32);
             *remaining_output -= 1;
 
-            let next = next_chain[match_row_index];
+            let next = next_chain[build_row_index];
 
             if *remaining_output == 0 {
-                // last index, and no more chain values left (indicated by 0).
+                // If this is the last output and no more chain values are left.
                 let next_offset = if initial_index == hash_values.len() - 1 && next == 0 {
                     None
                 } else {
@@ -162,7 +211,7 @@ impl JoinHashMap {
             if next == 0 {
                 break;
             }
-            match_row_index = next as usize - 1;
+            build_row_index = next as usize - 1;
         }
 
         None
