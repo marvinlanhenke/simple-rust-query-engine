@@ -218,22 +218,30 @@ impl JoinHashMap {
     }
 }
 
+/// Type alias representing a boxed future that resolves to [`BuildSideData`].
 type BuildSideFuture = BoxFuture<'static, Result<BuildSideData>>;
 
+/// Represents the data collected and stored on the build side of a join operation.
 #[derive(Debug)]
 struct BuildSideData {
+    /// The `JoinHashMap`.
     map: JoinHashMap,
+    /// The build side's `RecordBatch`.
     batch: RecordBatch,
-    /// Bitmap builder for visited left indices.
+    /// A bitmap builder for visited left indices.
     visited: BooleanBufferBuilder,
 }
 
+/// Enum representing the state of the build side during a join operation.
 enum BuildSideState {
+    /// The initial state, when `BuildSideData` is not ready yet.
     Initial(BuildSideFuture),
+    /// The ready state, contains the `BuildSideData`.
     Ready(BuildSideData),
 }
 
 impl BuildSideState {
+    /// Attempts to get a mutable reference to the `BuildSideFuture` if the state is `Initial`.
     fn try_as_init_mut(&mut self) -> Result<&mut BuildSideFuture> {
         match self {
             BuildSideState::Initial(fut) => Ok(fut),
@@ -244,6 +252,7 @@ impl BuildSideState {
         }
     }
 
+    /// Attempts to get a mutable reference to the `BuildSideData` if the state is `Ready`.
     fn try_as_ready_mut(&mut self) -> Result<&mut BuildSideData> {
         match self {
             BuildSideState::Ready(join_left_data) => Ok(join_left_data),
@@ -255,20 +264,29 @@ impl BuildSideState {
     }
 }
 
+/// Represents the execution plan for a hash join operation.
 #[derive(Debug)]
 pub struct HashJoinExec {
+    /// The left side `ExecutionPlan` of the join operation.
     lhs: Arc<dyn ExecutionPlan>,
+    /// The right side `ExecutionPlan` of the join operation.
     rhs: Arc<dyn ExecutionPlan>,
+    /// The `on` join conditions.
     on: JoinOn,
+    /// An optional `JoinFilter` applied to the join operation.
     filter: Option<JoinFilter>,
+    /// The `JoinType` (e.g. `Inner`, `Left`).
     join_type: JoinType,
     /// The output schema, after the join operation.
     schema: SchemaRef,
+    /// The columns involved in a join operation.
     column_indices: Vec<JoinColumnIndex>,
+    /// The random state used for creating hash values.
     random_state: RandomState,
 }
 
 impl HashJoinExec {
+    /// Attempts to create a new [`HashJoinExec`] instance.
     pub fn try_new(
         lhs: Arc<dyn ExecutionPlan>,
         rhs: Arc<dyn ExecutionPlan>,
@@ -303,7 +321,7 @@ impl HashJoinExec {
         })
     }
 
-    /// Checks if the columns intersection from both schemas matches the `JoinOn` condition.
+    /// Validates the join conditions by checking that the columns required for the join exist in both schemas.
     fn is_valid_join(left_schema: &Schema, right_schema: &Schema, on: &JoinOn) -> Result<()> {
         let extract_columns = |schema: &Schema| -> HashSet<ColumnExpr> {
             schema
@@ -347,7 +365,7 @@ impl HashJoinExec {
         Ok(())
     }
 
-    /// Creates a schema for a join operation, starting with the left sides fields.
+    /// Creates the schema for the output of a join operation, starting with the fields from the left side.
     fn create_join_schema(
         left_schema: &Schema,
         right_schema: &Schema,
@@ -379,6 +397,10 @@ impl HashJoinExec {
         (Arc::new(fields.finish()), column_indices)
     }
 
+    /// Collects and prepares the build-side data for a hash join operation.
+    ///
+    /// This method executes the left-side execution plan, processes the batches to build a
+    /// `JoinHashMap`, and returns the resulting `BuildSideData`.
     async fn collect_build_input(
         lhs: Arc<dyn ExecutionPlan>,
         lhs_on: Vec<Arc<dyn PhysicalExpression>>,
@@ -416,7 +438,7 @@ impl HashJoinExec {
         })
     }
 
-    /// Updates `JoinHashMap` by evaluating and hashing the `join-on` key expressions.
+    /// Updates the `JoinHashMap` by evaluating and hashing the `join-on` key expressions.
     fn update_hash(
         on: &[Arc<dyn PhysicalExpression>],
         batch: &RecordBatch,
