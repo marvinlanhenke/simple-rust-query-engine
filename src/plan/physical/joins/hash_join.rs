@@ -556,17 +556,12 @@ struct ProcessProbeBatchState {
     batch: RecordBatch,
     /// The current offset within the [`JoinHashMap`].
     offset: JoinHashMapOffset,
-    /// An optional index for the joined probe position.
-    joined_probe_index: Option<usize>,
 }
 
 impl ProcessProbeBatchState {
-    /// Advances the state of the probe batch processing by updating the offset and the joined probe index.
-    fn advance(&mut self, offset: JoinHashMapOffset, joined_probe_index: Option<usize>) {
+    /// Advances the state of the probe batch processing by updating the offset.
+    fn advance(&mut self, offset: JoinHashMapOffset) {
         self.offset = offset;
-        if joined_probe_index.is_some() {
-            self.joined_probe_index = joined_probe_index;
-        }
     }
 }
 
@@ -708,7 +703,6 @@ impl HashJoinStream {
                 self.state = HashJoinStreamState::ProcessProbeBatch(ProcessProbeBatchState {
                     batch,
                     offset: (0, None),
-                    joined_probe_index: None,
                 });
             }
             Some(Err(e)) => return Poll::Ready(Err(e)),
@@ -764,11 +758,7 @@ impl HashJoinStream {
         )?;
 
         if let Some(next_offset) = next_offset {
-            let joined_probe_index = match probe_indices.len() {
-                0 => None,
-                n => Some(probe_indices.value(n - 1) as usize),
-            };
-            probe_batch.advance(next_offset, joined_probe_index)
+            probe_batch.advance(next_offset)
         } else {
             self.state = HashJoinStreamState::FetchProbeBatch;
         }
