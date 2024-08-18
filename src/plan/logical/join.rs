@@ -6,6 +6,7 @@ use crate::expression::logical::expr::Expression;
 
 use super::plan::LogicalPlan;
 
+/// Enum representing the type of join operation.
 #[derive(Debug, Clone, Copy)]
 pub enum JoinType {
     Inner,
@@ -21,6 +22,11 @@ impl Display for JoinType {
     }
 }
 
+/// Represents a join operation in a logical query plan.
+///
+/// The `Join` struct defines the left and right inputs of the join, the join condition,
+/// the type of join, and any additional filters applied during the join. It also
+/// includes the schema of the output after the join is performed.
 #[derive(Debug)]
 pub struct Join {
     /// Left input [`LogicalPlan`].
@@ -38,6 +44,7 @@ pub struct Join {
 }
 
 impl Join {
+    /// Creates a new [`Join`] instance.
     pub fn new(
         lhs: Arc<LogicalPlan>,
         rhs: Arc<LogicalPlan>,
@@ -56,27 +63,32 @@ impl Join {
         }
     }
 
+    /// Retrieves the left input `LogicalPlan`.
     pub fn lhs(&self) -> &LogicalPlan {
         &self.lhs
     }
 
+    /// Retrieves the right input `LogicalPlan`.
     pub fn rhs(&self) -> &LogicalPlan {
         &self.rhs
     }
 
+    /// Retrieves the equijoin expression.
     pub fn on(&self) -> &[(Expression, Expression)] {
         &self.on
     }
 
+    /// Retrieves the type of join.
     pub fn join_type(&self) -> JoinType {
         self.join_type
     }
 
+    /// Retrieves the optional join filter expression.
     pub fn filter(&self) -> Option<&Expression> {
         self.filter.as_ref()
     }
 
-    /// The output schema.
+    /// Retrieves the output schema, after the join operation.
     pub fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
