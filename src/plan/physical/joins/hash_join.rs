@@ -766,6 +766,10 @@ impl HashJoinStream {
         Ok(StreamResultState::Ready(Some(result)))
     }
 
+    /// Retrieves and processes the matched join key indices between the build and probe batches.
+    ///
+    /// This method compares the join keys from the build and probe batches, applies any necessary
+    /// row equality filters, and returns the matched indices along with any remaining offset for further processing.
     #[allow(clippy::too_many_arguments)]
     fn get_matched_join_key_indices(
         map: &JoinHashMap,
@@ -794,6 +798,10 @@ impl HashJoinStream {
         Ok((build_indices, probe_indices, next_offset))
     }
 
+    /// Applies a row-level equality filter to the matched build and probe indices.
+    ///
+    /// This method ensures that the rows matched by the join keys also satisfy the row equality condition.
+    /// It compares the rows from the build and probe batches and returns the filtered indices.
     fn apply_row_equality_filter(
         build_on: &[Arc<dyn PhysicalExpression>],
         build_indices: &UInt64Array,
@@ -841,6 +849,10 @@ impl HashJoinStream {
         ))
     }
 
+    /// Applies the join filter to the matched build and probe indices.
+    ///
+    /// This method evaluates the join filter expression on the intermediate batch and applies
+    /// the resulting boolean mask to the matched build and probe indices.
     fn apply_join_filter(
         filter: &Option<JoinFilter>,
         build_indices: UInt64Array,
@@ -854,9 +866,7 @@ impl HashJoinStream {
         }
 
         if let Some(filter) = filter {
-            // build intermediate batch
-            // evaluate filter expr -> boolean mask
-            // apply filter mask to build and probe indices
+            // Build intermediate batch and apply filter expression
             let intermediate_batch = Self::build_batch_from_indices(
                 filter.schema(),
                 build_batch,
@@ -883,6 +893,10 @@ impl HashJoinStream {
         }
     }
 
+    /// Constructs a record batch from the given build and probe indices.
+    ///
+    /// This method takes the matched indices from the build and probe sides and constructs
+    /// the final output batch by combining the relevant columns.
     fn build_batch_from_indices(
         schema: SchemaRef,
         build_batch: &RecordBatch,
@@ -929,6 +943,11 @@ impl HashJoinStream {
         Ok(RecordBatch::try_new(schema, columns)?)
     }
 
+    /// Processes any unmatched build rows in a left join operation.
+    ///
+    /// This method handles the unmatched build rows when performing a left join,
+    /// ensuring that these rows are included in the final output with null values
+    /// for the corresponding probe side.
     fn process_unmatched_build_batch(&mut self) -> Result<StreamResultState<Option<RecordBatch>>> {
         if !matches!(self.join_type, JoinType::Left) {
             self.state = HashJoinStreamState::Completed;
