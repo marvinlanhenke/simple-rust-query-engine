@@ -525,14 +525,21 @@ impl Display for HashJoinExec {
     }
 }
 
-/// Represents the stream result.
-/// Indicated whether the stream produced a result that is ready for use
-/// or if the operation is required to continue.
+/// Represents the state of a stream's result.
+///
+/// This enum indicates whether a stream has produced a result that is ready for use
+/// (`Ready(T)`) or if the operation needs to continue processing (`Continue`).
 enum StreamResultState<T> {
     Ready(T),
     Continue,
 }
 
+/// A macro to handle the result of a stream processing operation.
+///
+/// This macro checks the result of a stream operation and performs the appropriate action:
+/// - If the result is `StreamResultState::Continue`, it continues processing.
+/// - If the result is `StreamResultState::Ready`, it returns the result wrapped in a `Poll::Ready`.
+/// - If an error occurs, it returns the error wrapped in a `Poll::Ready`.
 macro_rules! handle_stream_result {
     ($e: expr) => {
         match $e {
@@ -543,13 +550,18 @@ macro_rules! handle_stream_result {
     };
 }
 
+/// Represents the state of processing a probe batch during a hash join.
 struct ProcessProbeBatchState {
+    /// The current processed `RecordBatch`.
     batch: RecordBatch,
+    /// The current offset within the [`JoinHashMap`].
     offset: JoinHashMapOffset,
+    /// An optional index for the joined probe position.
     joined_probe_index: Option<usize>,
 }
 
 impl ProcessProbeBatchState {
+    /// Advances the state of the probe batch processing by updating the offset and the joined probe index.
     fn advance(&mut self, offset: JoinHashMapOffset, joined_probe_index: Option<usize>) {
         self.offset = offset;
         if joined_probe_index.is_some() {
@@ -558,6 +570,16 @@ impl ProcessProbeBatchState {
     }
 }
 
+/// Represents the different states of a hash join stream.
+///
+/// This enum tracks the progress of a hash join operation through various stages, such as waiting
+/// for the build side, fetching a probe batch, processing a probe batch, and completing the join.
+///
+/// A normal progression should be:
+/// -> `WaitBuildSide` -> `FetchProbeBatch` -> ProcessProbeBatch -> ExhaustedProbeSide -> Completed
+///                             ^                     |
+///                             |                     |
+///                             +---------------------+
 enum HashJoinStreamState {
     WaitBuildSide,
     FetchProbeBatch,
@@ -567,6 +589,7 @@ enum HashJoinStreamState {
 }
 
 impl HashJoinStreamState {
+    /// Attempts to retrieve a mutable reference to the `ProcessProbeBatchState` if the stream is in that state.
     fn try_as_process_probe_batch(&mut self) -> Result<&mut ProcessProbeBatchState> {
         match self {
             HashJoinStreamState::ProcessProbeBatch(batch) => Ok(batch),
@@ -578,27 +601,46 @@ impl HashJoinStreamState {
     }
 }
 
+/// A stream that executes a hash join operation between two input data sources.
+///
+/// The `HashJoinStream` struct manages the state and execution of a hash join, processing
+/// input batches from both sides (build and probe), applying any necessary filters, and
+/// producing joined output batches according to the specified join type.
 struct HashJoinStream {
-    /// The input schema.
+    /// The output schema of the join operation.
     schema: SchemaRef,
+    /// The join key expressions on the build side.
     build_on: Vec<Arc<dyn PhysicalExpression>>,
+    /// The join key expressions on the probe side.
     probe_on: Vec<Arc<dyn PhysicalExpression>>,
+    /// An optional filter applied to the join operation.
     filter: Option<JoinFilter>,
+    /// The type of join operation (e.g. `Inner`, `Left`).
     join_type: JoinType,
+    /// The state of the build side during the join process.
     build_side: BuildSideState,
-    /// The right (probe) input stream.
+    /// The stream of input data from the probe side.
     probe_input: RecordBatchStream,
+    /// The schema of the probe input.
     probe_schema: SchemaRef,
+    /// A vector of column indices used to construct the output batch.
     column_indices: Vec<JoinColumnIndex>,
+    /// The current state of the hash join stream.
     state: HashJoinStreamState,
-    /// Maximum output batch size.
+    /// The maximum size of the  output batch.
     batch_size: usize,
-    /// Internal buffer for computing hashes.
+    /// An internal buffer used for computing hash values.
     hashes_buffer: Vec<u64>,
+    /// The random state used for hash computation.
     random_state: RandomState,
 }
 
 impl HashJoinStream {
+    /// Polls the stream to produce the next output batch.
+    ///
+    /// This method advances the stream state machine, performing actions such as collecting
+    /// the build side, fetching the next probe batch, processing probe batches, and handling
+    /// any unmatched build rows.
     fn poll_next_inner(
         &mut self,
         cx: &mut std::task::Context<'_>,
@@ -624,6 +666,11 @@ impl HashJoinStream {
         }
     }
 
+    /// Collects data from the build side and transitions the state to fetching probe batches.
+    ///
+    /// This method waits for the build side data to be fully prepared before continuing
+    /// with the join operation. Once the build side is ready, it updates the stream state to
+    /// continue with fetching the probe batch (`FetchProbeBatch`).
     fn collect_build_side(
         &mut self,
         cx: &mut std::task::Context<'_>,
@@ -639,6 +686,10 @@ impl HashJoinStream {
         Poll::Ready(Ok(StreamResultState::Continue))
     }
 
+    /// Fetches the next batch from the probe side and prepares it for processing.
+    ///
+    /// This method retrieves the next batch of data from the probe input, computes the hash values
+    /// for the join keys, and transitions the state to processing the probe batch.
     fn fetch_probe_batch(
         &mut self,
         cx: &mut std::task::Context<'_>,
@@ -665,6 +716,11 @@ impl HashJoinStream {
         Poll::Ready(Ok(StreamResultState::Continue))
     }
 
+    /// Processes the current probe batch, performing the join operation and building the output batch.
+    ///
+    /// This method matches the current probe batch against the build side using the join keys, applies
+    /// any necessary join filters, and constructs the output batch. It then advances the state to
+    /// fetch the next probe batch or handle any remaining unmatched build rows.
     fn process_probe_batch(&mut self) -> Result<StreamResultState<Option<RecordBatch>>> {
         let build_side = self.build_side.try_as_ready_mut()?;
         let map = &build_side.map;
@@ -672,9 +728,7 @@ impl HashJoinStream {
         let probe_batch = self.state.try_as_process_probe_batch()?;
         let visited = &mut build_side.visited;
 
-        // get matched join-key indices, check for equal rows
-        // apply join filters if exists
-        // build output batch from indices
+        // Get matched join-key indices, apply join filters if exists, build output batch
         let (build_indices, probe_indices, next_offset) = Self::get_matched_join_key_indices(
             map,
             self.build_on.as_slice(),
@@ -709,12 +763,11 @@ impl HashJoinStream {
             JoinSide::Left,
         )?;
 
-        let joined_probe_index = match probe_indices.len() {
-            0 => None,
-            n => Some(probe_indices.value(n - 1) as usize),
-        };
-
         if let Some(next_offset) = next_offset {
+            let joined_probe_index = match probe_indices.len() {
+                0 => None,
+                n => Some(probe_indices.value(n - 1) as usize),
+            };
             probe_batch.advance(next_offset, joined_probe_index)
         } else {
             self.state = HashJoinStreamState::FetchProbeBatch;
