@@ -254,7 +254,7 @@ impl BuildSideState {
     /// Attempts to get a mutable reference to the `BuildSideData` if the state is `Ready`.
     fn try_as_ready_mut(&mut self) -> Result<&mut BuildSideData> {
         match self {
-            BuildSideState::Ready(join_left_data) => Ok(join_left_data),
+            BuildSideState::Ready(data) => Ok(data),
             _ => Err(Error::InvalidOperation {
                 message: "Expected build side in ready state".to_string(),
                 location: location!(),
