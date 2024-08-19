@@ -11,10 +11,10 @@ use arrow_select::take::take;
 use ahash::RandomState;
 use arrow::{
     array::{
-        as_boolean_array, downcast_array, BooleanBufferBuilder, UInt32BufferBuilder, UInt32Builder,
+        downcast_array, BooleanBufferBuilder, UInt32BufferBuilder, UInt32Builder,
         UInt64BufferBuilder,
     },
-    compute::{self, and, concat_batches, kernels::cmp::eq, FilterBuilder},
+    compute::{and, concat_batches, kernels::cmp::eq, FilterBuilder},
 };
 use arrow_array::{BooleanArray, PrimitiveArray, RecordBatch, UInt32Array, UInt64Array};
 use arrow_schema::SchemaRef;
@@ -34,8 +34,8 @@ use crate::{
 
 use super::{
     utils::{
-        build_batch_from_indices, create_join_schema, is_valid_join, JoinColumnIndex, JoinFilter,
-        JoinOn, JoinSide,
+        apply_join_filter, build_batch_from_indices, create_join_schema, is_valid_join,
+        JoinColumnIndex, JoinFilter, JoinOn, JoinSide,
     },
     DEFAULT_BATCH_SIZE,
 };
@@ -656,7 +656,7 @@ impl HashJoinStream {
             probe_batch.offset,
         )?;
 
-        let (build_indices, probe_indices) = Self::apply_join_filter(
+        let (build_indices, probe_indices) = apply_join_filter(
             &self.filter,
             build_indices,
             probe_indices,
@@ -769,50 +769,6 @@ impl HashJoinStream {
             downcast_array(build_filtered.as_ref()),
             downcast_array(probe_filtered.as_ref()),
         ))
-    }
-
-    /// Applies the join filter to the matched build and probe indices.
-    ///
-    /// This method evaluates the join filter expression on the intermediate batch and applies
-    /// the resulting boolean mask to the matched build and probe indices.
-    fn apply_join_filter(
-        filter: &Option<JoinFilter>,
-        build_indices: UInt64Array,
-        probe_indices: UInt32Array,
-        build_batch: &RecordBatch,
-        probe_batch: &RecordBatch,
-        side: JoinSide,
-    ) -> Result<(UInt64Array, UInt32Array)> {
-        if build_indices.is_empty() && probe_indices.is_empty() {
-            return Ok((build_indices, probe_indices));
-        }
-
-        if let Some(filter) = filter {
-            // Build intermediate batch and apply filter expression
-            let intermediate_batch = build_batch_from_indices(
-                filter.schema(),
-                build_batch,
-                probe_batch,
-                &build_indices,
-                &probe_indices,
-                filter.column_indices(),
-                side,
-            )?;
-            let filter_result = filter
-                .expression()
-                .eval(&intermediate_batch)?
-                .into_array(intermediate_batch.num_rows())?;
-            let filter_mask = as_boolean_array(&filter_result);
-            let build_filtered = compute::filter(&build_indices, filter_mask)?;
-            let probe_filtered = compute::filter(&probe_indices, filter_mask)?;
-
-            Ok((
-                downcast_array(build_filtered.as_ref()),
-                downcast_array(probe_filtered.as_ref()),
-            ))
-        } else {
-            Ok((build_indices, probe_indices))
-        }
     }
 
     /// Processes any unmatched build rows in a left join operation.

@@ -1,6 +1,9 @@
 use std::{collections::HashSet, sync::Arc};
 
-use arrow::compute;
+use arrow::{
+    array::{as_boolean_array, downcast_array},
+    compute,
+};
 use arrow_array::{
     new_null_array, Array, ArrayRef, RecordBatch, RecordBatchOptions, UInt32Array, UInt64Array,
 };
@@ -233,6 +236,50 @@ mod tests {
             )],
         );
         assert!(result.is_err());
+    }
+}
+
+/// Applies the join filter to the matched build and probe indices.
+///
+/// This method evaluates the join filter expression on the intermediate batch and applies
+/// the resulting boolean mask to the matched build and probe indices.
+pub fn apply_join_filter(
+    filter: &Option<JoinFilter>,
+    build_indices: UInt64Array,
+    probe_indices: UInt32Array,
+    build_batch: &RecordBatch,
+    probe_batch: &RecordBatch,
+    side: JoinSide,
+) -> Result<(UInt64Array, UInt32Array)> {
+    if build_indices.is_empty() && probe_indices.is_empty() {
+        return Ok((build_indices, probe_indices));
+    }
+
+    if let Some(filter) = filter {
+        // Build intermediate batch and apply filter expression
+        let intermediate_batch = build_batch_from_indices(
+            filter.schema(),
+            build_batch,
+            probe_batch,
+            &build_indices,
+            &probe_indices,
+            filter.column_indices(),
+            side,
+        )?;
+        let filter_result = filter
+            .expression()
+            .eval(&intermediate_batch)?
+            .into_array(intermediate_batch.num_rows())?;
+        let filter_mask = as_boolean_array(&filter_result);
+        let build_filtered = compute::filter(&build_indices, filter_mask)?;
+        let probe_filtered = compute::filter(&probe_indices, filter_mask)?;
+
+        Ok((
+            downcast_array(build_filtered.as_ref()),
+            downcast_array(probe_filtered.as_ref()),
+        ))
+    } else {
+        Ok((build_indices, probe_indices))
     }
 }
 
