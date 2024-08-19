@@ -138,6 +138,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_inner_join_no_join_keys_with_filters() {
+        let ctx = SessionContext::new();
+
+        let lhs = ctx
+            .read_csv("testdata/csv/join_left.csv", CsvReadOptions::new())
+            .unwrap();
+        let rhs = ctx
+            .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let filter = col("l2").gt(lit(1i64));
+        let df = lhs.join(rhs, JoinType::Inner, &[], &[], Some(filter));
+
+        let expected = vec![
+            "+----+----+----+----+-----+------+",
+            "| l1 | l2 | l3 | r1 | r2  | r3   |",
+            "+----+----+----+----+-----+------+",
+            "| b  | 2  | 20 | a  | 100 | 1000 |",
+            "| b  | 2  | 20 | b  | 200 | 2000 |",
+            "| b  | 2  | 20 | c  | 300 | 3000 |",
+            "| c  | 3  | 30 | a  | 100 | 1000 |",
+            "| c  | 3  | 30 | b  | 200 | 2000 |",
+            "| c  | 3  | 30 | c  | 300 | 3000 |",
+            "| d  | 4  | 40 | a  | 100 | 1000 |",
+            "| d  | 4  | 40 | b  | 200 | 2000 |",
+            "| d  | 4  | 40 | c  | 300 | 3000 |",
+            "| e  | 5  | 50 | a  | 100 | 1000 |",
+            "| e  | 5  | 50 | b  | 200 | 2000 |",
+            "| e  | 5  | 50 | c  | 300 | 3000 |",
+            "| f  | 6  | 60 | a  | 100 | 1000 |",
+            "| f  | 6  | 60 | b  | 200 | 2000 |",
+            "| f  | 6  | 60 | c  | 300 | 3000 |",
+            "+----+----+----+----+-----+------+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
+    async fn test_dataframe_inner_join_no_join_keys_no_filters() {
+        let ctx = SessionContext::new();
+
+        let lhs = ctx
+            .read_csv("testdata/csv/join_left.csv", CsvReadOptions::new())
+            .unwrap();
+        let rhs = ctx
+            .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = lhs.join(rhs, JoinType::Inner, &[], &[], None);
+
+        let expected = vec![
+            "+----+----+----+----+-----+------+",
+            "| l1 | l2 | l3 | r1 | r2  | r3   |",
+            "+----+----+----+----+-----+------+",
+            "| a  | 1  | 10 | a  | 100 | 1000 |",
+            "| a  | 1  | 10 | b  | 200 | 2000 |",
+            "| a  | 1  | 10 | c  | 300 | 3000 |",
+            "| b  | 2  | 20 | a  | 100 | 1000 |",
+            "| b  | 2  | 20 | b  | 200 | 2000 |",
+            "| b  | 2  | 20 | c  | 300 | 3000 |",
+            "| c  | 3  | 30 | a  | 100 | 1000 |",
+            "| c  | 3  | 30 | b  | 200 | 2000 |",
+            "| c  | 3  | 30 | c  | 300 | 3000 |",
+            "| d  | 4  | 40 | a  | 100 | 1000 |",
+            "| d  | 4  | 40 | b  | 200 | 2000 |",
+            "| d  | 4  | 40 | c  | 300 | 3000 |",
+            "| e  | 5  | 50 | a  | 100 | 1000 |",
+            "| e  | 5  | 50 | b  | 200 | 2000 |",
+            "| e  | 5  | 50 | c  | 300 | 3000 |",
+            "| f  | 6  | 60 | a  | 100 | 1000 |",
+            "| f  | 6  | 60 | b  | 200 | 2000 |",
+            "| f  | 6  | 60 | c  | 300 | 3000 |",
+            "+----+----+----+----+-----+------+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_inner_join_with_filters() {
         let ctx = SessionContext::new();
 

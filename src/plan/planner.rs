@@ -29,6 +29,7 @@ use crate::{
             filter::FilterExec,
             joins::{
                 hash_join::HashJoinExec,
+                nested_loop_join::NestedLoopJoinExec,
                 utils::{JoinColumnIndex, JoinFilter, JoinOn, JoinSide},
             },
             limit::LimitExec,
@@ -182,11 +183,15 @@ impl Planner {
                     None => None,
                 };
 
-                // TODO: if no 'join-on' condition we should use NestedLoopJoin
-                // which has yet to be implemented.
-                Ok(Arc::new(HashJoinExec::try_new(
-                    lhs, rhs, on, filter, join_type,
-                )?))
+                if on.is_empty() {
+                    Ok(Arc::new(NestedLoopJoinExec::try_new(
+                        lhs, rhs, filter, join_type,
+                    )?))
+                } else {
+                    Ok(Arc::new(HashJoinExec::try_new(
+                        lhs, rhs, on, filter, join_type,
+                    )?))
+                }
             }
         }
     }
