@@ -16,10 +16,7 @@ use arrow::{
     },
     compute::{self, and, concat_batches, kernels::cmp::eq, FilterBuilder},
 };
-use arrow_array::{
-    new_null_array, Array, ArrayRef, BooleanArray, PrimitiveArray, RecordBatch, RecordBatchOptions,
-    UInt32Array, UInt64Array,
-};
+use arrow_array::{BooleanArray, PrimitiveArray, RecordBatch, UInt32Array, UInt64Array};
 use arrow_schema::SchemaRef;
 use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryStreamExt};
 use snafu::location;
