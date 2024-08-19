@@ -2,12 +2,13 @@ use std::{
     any::Any,
     fmt::{Debug, Display},
     sync::Arc,
+    task::Poll,
 };
 
-use arrow::array::BooleanBufferBuilder;
+use arrow::{array::BooleanBufferBuilder, compute::concat_batches};
 use arrow_array::RecordBatch;
 use arrow_schema::SchemaRef;
-use futures::{future::BoxFuture, FutureExt};
+use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryStreamExt};
 use snafu::location;
 
 use crate::{
@@ -114,8 +115,23 @@ impl NestedLoopJoinExec {
         })
     }
 
-    async fn collect_build_input() -> Result<InnerTableData> {
-        todo!()
+    async fn collect_build_input(lhs: Arc<dyn ExecutionPlan>) -> Result<InnerTableData> {
+        let schema = lhs.schema();
+        let stream = lhs.execute()?;
+
+        let init = (Vec::new(), 0);
+        let (batches, num_rows) = stream
+            .try_fold(init, |mut acc, batch| async {
+                acc.1 += batch.num_rows();
+                acc.0.push(batch);
+                Ok(acc)
+            })
+            .await?;
+        let batch = concat_batches(&schema, batches.iter())?;
+        let mut visited = BooleanBufferBuilder::new(batch.num_rows());
+        visited.append_n(num_rows, false);
+
+        Ok(InnerTableData::new(batch, visited))
     }
 }
 
@@ -133,8 +149,21 @@ impl ExecutionPlan for NestedLoopJoinExec {
     }
 
     fn execute(&self) -> Result<RecordBatchStream> {
-        // let _ = async move { Self::collect_build_input().await }.boxed();
-        todo!()
+        let lhs = self.lhs.clone();
+        let inner_table =
+            InnerTableState::Initial(async move { Self::collect_build_input(lhs).await }.boxed());
+        let outer_table = self.rhs.execute()?;
+        let stream = NestedLoopJoinStream {
+            schema: self.schema(),
+            filter: self.filter.clone(),
+            join_type: self.join_type,
+            inner_table,
+            outer_table,
+            column_indices: self.column_indices.clone(),
+            is_exhaused: false,
+        };
+
+        Ok(stream.boxed())
     }
 
     fn format(&self) -> String {
@@ -150,3 +179,36 @@ impl Display for NestedLoopJoinExec {
         format_exec(self, f, 0)
     }
 }
+
+struct NestedLoopJoinStream {
+    schema: SchemaRef,
+    filter: Option<JoinFilter>,
+    join_type: JoinType,
+    inner_table: InnerTableState,
+    outer_table: RecordBatchStream,
+    column_indices: Vec<JoinColumnIndex>,
+    is_exhaused: bool,
+}
+
+impl NestedLoopJoinStream {
+    fn poll_next_inner(
+        &mut self,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Result<RecordBatch>>> {
+        todo!()
+    }
+}
+
+impl Stream for NestedLoopJoinStream {
+    type Item = Result<RecordBatch>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        self.poll_next_inner(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {}
