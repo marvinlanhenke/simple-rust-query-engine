@@ -172,73 +172,6 @@ pub fn create_join_schema(
     (Arc::new(fields.finish()), column_indices)
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use crate::{
-        expression::physical::column::ColumnExpr,
-        plan::{
-            logical::join::JoinType,
-            physical::joins::utils::{create_join_schema, is_valid_join},
-        },
-        tests::create_schema,
-    };
-
-    #[test]
-    fn test_create_join_schema() {
-        let left_schema = create_schema();
-        let right_schema = create_schema();
-
-        let (schema, column_indices) =
-            create_join_schema(&left_schema, &right_schema, &JoinType::Inner);
-        assert_eq!(schema.fields().len(), 6);
-        assert_eq!(column_indices.len(), 6);
-    }
-
-    #[test]
-    fn test_is_valid_join() {
-        let left_schema = create_schema();
-        let right_schema = create_schema();
-
-        let result = is_valid_join(
-            &left_schema,
-            &right_schema,
-            &vec![(
-                Arc::new(ColumnExpr::new("c1", 0)),
-                Arc::new(ColumnExpr::new("c1", 0)),
-            )],
-        );
-        assert!(result.is_ok());
-
-        let result = is_valid_join(
-            &left_schema,
-            &right_schema,
-            &vec![
-                (
-                    Arc::new(ColumnExpr::new("c1", 0)),
-                    Arc::new(ColumnExpr::new("c1", 0)),
-                ),
-                (
-                    Arc::new(ColumnExpr::new("c2", 1)),
-                    Arc::new(ColumnExpr::new("c2", 1)),
-                ),
-            ],
-        );
-        assert!(result.is_ok());
-
-        let result = is_valid_join(
-            &left_schema,
-            &right_schema,
-            &vec![(
-                Arc::new(ColumnExpr::new("c1", 0)),
-                Arc::new(ColumnExpr::new("c4", 3)),
-            )],
-        );
-        assert!(result.is_err());
-    }
-}
-
 /// Applies the join filter to the matched build and probe indices.
 ///
 /// This method evaluates the join filter expression on the intermediate batch and applies
@@ -331,4 +264,71 @@ pub fn build_batch_from_indices(
     }
 
     Ok(RecordBatch::try_new(schema, columns)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::{
+        expression::physical::column::ColumnExpr,
+        plan::{
+            logical::join::JoinType,
+            physical::joins::utils::{create_join_schema, is_valid_join},
+        },
+        tests::create_schema,
+    };
+
+    #[test]
+    fn test_create_join_schema() {
+        let left_schema = create_schema();
+        let right_schema = create_schema();
+
+        let (schema, column_indices) =
+            create_join_schema(&left_schema, &right_schema, &JoinType::Inner);
+        assert_eq!(schema.fields().len(), 6);
+        assert_eq!(column_indices.len(), 6);
+    }
+
+    #[test]
+    fn test_is_valid_join() {
+        let left_schema = create_schema();
+        let right_schema = create_schema();
+
+        let result = is_valid_join(
+            &left_schema,
+            &right_schema,
+            &vec![(
+                Arc::new(ColumnExpr::new("c1", 0)),
+                Arc::new(ColumnExpr::new("c1", 0)),
+            )],
+        );
+        assert!(result.is_ok());
+
+        let result = is_valid_join(
+            &left_schema,
+            &right_schema,
+            &vec![
+                (
+                    Arc::new(ColumnExpr::new("c1", 0)),
+                    Arc::new(ColumnExpr::new("c1", 0)),
+                ),
+                (
+                    Arc::new(ColumnExpr::new("c2", 1)),
+                    Arc::new(ColumnExpr::new("c2", 1)),
+                ),
+            ],
+        );
+        assert!(result.is_ok());
+
+        let result = is_valid_join(
+            &left_schema,
+            &right_schema,
+            &vec![(
+                Arc::new(ColumnExpr::new("c1", 0)),
+                Arc::new(ColumnExpr::new("c4", 3)),
+            )],
+        );
+        assert!(result.is_err());
+    }
 }
