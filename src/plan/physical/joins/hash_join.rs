@@ -36,7 +36,10 @@ use crate::{
 };
 
 use super::{
-    utils::{create_join_schema, is_valid_join, JoinColumnIndex, JoinFilter, JoinOn, JoinSide},
+    utils::{
+        build_batch_from_indices, create_join_schema, is_valid_join, JoinColumnIndex, JoinFilter,
+        JoinOn, JoinSide,
+    },
     DEFAULT_BATCH_SIZE,
 };
 
@@ -669,7 +672,7 @@ impl HashJoinStream {
                 visited.set_bit(x as usize, true);
             });
         }
-        let result = Self::build_batch_from_indices(
+        let result = build_batch_from_indices(
             self.schema.clone(),
             build_batch,
             &probe_batch.batch,
@@ -789,7 +792,7 @@ impl HashJoinStream {
 
         if let Some(filter) = filter {
             // Build intermediate batch and apply filter expression
-            let intermediate_batch = Self::build_batch_from_indices(
+            let intermediate_batch = build_batch_from_indices(
                 filter.schema(),
                 build_batch,
                 probe_batch,
@@ -813,56 +816,6 @@ impl HashJoinStream {
         } else {
             Ok((build_indices, probe_indices))
         }
-    }
-
-    /// Constructs a record batch from the given build and probe indices.
-    ///
-    /// This method takes the matched indices from the build and probe sides and constructs
-    /// the final output batch by combining the relevant columns.
-    fn build_batch_from_indices(
-        schema: SchemaRef,
-        build_batch: &RecordBatch,
-        probe_batch: &RecordBatch,
-        build_indices: &UInt64Array,
-        probe_indices: &UInt32Array,
-        column_indices: &[JoinColumnIndex],
-        side: JoinSide,
-    ) -> Result<RecordBatch> {
-        if schema.fields().is_empty() {
-            let options = RecordBatchOptions::new()
-                .with_match_field_names(true)
-                .with_row_count(Some(build_indices.len()));
-            return Ok(RecordBatch::try_new_with_options(
-                schema.clone(),
-                vec![],
-                &options,
-            )?);
-        }
-
-        let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
-        for col_idx in column_indices {
-            let array = match col_idx.side() == side {
-                true => {
-                    let array = build_batch.column(col_idx.index());
-                    if array.is_empty() || build_indices.null_count() == build_indices.len() {
-                        new_null_array(array.data_type(), build_indices.len())
-                    } else {
-                        compute::take(array.as_ref(), build_indices, None)?
-                    }
-                }
-                false => {
-                    let array = probe_batch.column(col_idx.index());
-                    if array.is_empty() || probe_indices.null_count() == probe_indices.len() {
-                        new_null_array(array.data_type(), probe_indices.len())
-                    } else {
-                        compute::take(array.as_ref(), probe_indices, None)?
-                    }
-                }
-            };
-            columns.push(array);
-        }
-
-        Ok(RecordBatch::try_new(schema, columns)?)
     }
 
     /// Processes any unmatched build rows in a left join operation.
@@ -889,7 +842,7 @@ impl HashJoinStream {
         let probe_indices = builder.finish();
         let probe_batch = RecordBatch::new_empty(self.probe_schema.clone());
 
-        let result = Self::build_batch_from_indices(
+        let result = build_batch_from_indices(
             self.schema.clone(),
             build_batch,
             &probe_batch,

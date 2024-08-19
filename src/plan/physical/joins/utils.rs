@@ -1,5 +1,9 @@
 use std::{collections::HashSet, sync::Arc};
 
+use arrow::compute;
+use arrow_array::{
+    new_null_array, Array, ArrayRef, RecordBatch, RecordBatchOptions, UInt32Array, UInt64Array,
+};
 use arrow_schema::{Schema, SchemaBuilder, SchemaRef};
 use snafu::location;
 
@@ -230,4 +234,54 @@ mod tests {
         );
         assert!(result.is_err());
     }
+}
+
+/// Constructs a record batch from the given build and probe indices.
+///
+/// This method takes the matched indices from the build and probe sides and constructs
+/// the final output batch by combining the relevant columns.
+pub fn build_batch_from_indices(
+    schema: SchemaRef,
+    build_batch: &RecordBatch,
+    probe_batch: &RecordBatch,
+    build_indices: &UInt64Array,
+    probe_indices: &UInt32Array,
+    column_indices: &[JoinColumnIndex],
+    side: JoinSide,
+) -> Result<RecordBatch> {
+    if schema.fields().is_empty() {
+        let options = RecordBatchOptions::new()
+            .with_match_field_names(true)
+            .with_row_count(Some(build_indices.len()));
+        return Ok(RecordBatch::try_new_with_options(
+            schema.clone(),
+            vec![],
+            &options,
+        )?);
+    }
+
+    let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
+    for col_idx in column_indices {
+        let array = match col_idx.side() == side {
+            true => {
+                let array = build_batch.column(col_idx.index());
+                if array.is_empty() || build_indices.null_count() == build_indices.len() {
+                    new_null_array(array.data_type(), build_indices.len())
+                } else {
+                    compute::take(array.as_ref(), build_indices, None)?
+                }
+            }
+            false => {
+                let array = probe_batch.column(col_idx.index());
+                if array.is_empty() || probe_indices.null_count() == probe_indices.len() {
+                    new_null_array(array.data_type(), probe_indices.len())
+                } else {
+                    compute::take(array.as_ref(), probe_indices, None)?
+                }
+            }
+        };
+        columns.push(array);
+    }
+
+    Ok(RecordBatch::try_new(schema, columns)?)
 }
