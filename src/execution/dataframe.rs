@@ -48,7 +48,7 @@ impl DataFrame {
 
     /// Collects the results of the query execution as `RecordBatch`'es.
     pub async fn collect(&self) -> Result<Vec<RecordBatch>> {
-        let optimized = self.optimizer.optimize(self.plan.clone())?;
+        let optimized = self.optimizer.optimize(&self.plan)?;
         let physical_plan = Planner::create_physical_plan(&optimized)?;
         let stream = physical_plan.execute()?;
 
