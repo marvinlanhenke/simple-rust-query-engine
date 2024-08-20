@@ -11,7 +11,7 @@ use crate::{
 use super::plan::LogicalPlan;
 
 /// Represents a filter operation in a logical plan.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Filter {
     /// The input [`LogicalPlan`].
     input: Arc<LogicalPlan>,

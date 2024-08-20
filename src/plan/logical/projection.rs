@@ -7,7 +7,7 @@ use crate::expression::logical::expr::Expression;
 use super::plan::LogicalPlan;
 
 /// Represents a projection operation in a logical plan.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Projection {
     /// The input [`LogicalPlan`].
     input: Arc<LogicalPlan>,

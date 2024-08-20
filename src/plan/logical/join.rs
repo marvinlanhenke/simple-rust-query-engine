@@ -27,7 +27,7 @@ impl Display for JoinType {
 /// The `Join` struct defines the left and right inputs of the join, the join condition,
 /// the type of join, and any additional filters applied during the join. It also
 /// includes the schema of the output after the join is performed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Join {
     /// Left input [`LogicalPlan`].
     lhs: Arc<LogicalPlan>,

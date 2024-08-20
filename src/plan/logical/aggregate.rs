@@ -7,7 +7,7 @@ use crate::{error::Result, expression::logical::expr::Expression};
 use super::plan::LogicalPlan;
 
 /// Represents an [`Aggregate`] logical plan in a query.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Aggregate {
     /// The input logical plan.
     input: Arc<LogicalPlan>,

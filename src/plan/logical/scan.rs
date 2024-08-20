@@ -7,7 +7,7 @@ use crate::{expression::logical::expr::Expression, io::DataSource};
 use super::plan::LogicalPlan;
 
 /// A scan operation on a [`DataSource`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Scan {
     /// The filesystem path to the data file.
     path: String,

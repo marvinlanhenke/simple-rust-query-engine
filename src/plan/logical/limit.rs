@@ -7,7 +7,7 @@ use super::plan::LogicalPlan;
 /// Represents a logical plan node that limits the number of rows processed
 /// by a query, potentially skipping a number of rows and fetching a maximum
 /// number of rows from the input plan.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Limit {
     /// The input [`LogicalPlan`].
     input: Arc<LogicalPlan>,

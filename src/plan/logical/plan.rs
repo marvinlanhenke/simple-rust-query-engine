@@ -8,7 +8,7 @@ use super::{
 };
 
 /// Represents a [`LogicalPlan`] for query execution.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LogicalPlan {
     /// Represents a data scanning operation from a specified data source.
     /// Typically used as the initial step in query processing to load data,
