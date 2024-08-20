@@ -6,7 +6,7 @@ use crate::{
     error::Result,
     expression::{logical::expr::Expression, operator::Operator},
     io::PredicatePushDownSupport,
-    plan::logical::{filter::Filter, plan::LogicalPlan, scan::Scan},
+    plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
 };
 
 use super::OptimizerRule;
@@ -28,10 +28,10 @@ impl PredicatePushDownRule {
         let child_plan = filter.input();
 
         let new_plan = match child_plan {
-            LogicalPlan::Scan(plan) => {
+            LogicalPlan::Scan(scan) => {
                 let predicates = Self::split_conjunction(&filter.expressions()[0], vec![]);
 
-                let supported = plan
+                let supported = scan
                     .source()
                     .can_pushdown_predicates(predicates.as_slice())?;
 
@@ -42,7 +42,7 @@ impl PredicatePushDownRule {
                     }
                     Some(*e)
                 });
-                let new_scan_predicates = plan
+                let new_scan_predicates = scan
                     .expressions()
                     .iter()
                     .chain(to_pushdown)
@@ -50,9 +50,9 @@ impl PredicatePushDownRule {
                     .cloned()
                     .collect::<Vec<_>>();
                 let new_plan = LogicalPlan::Scan(Scan::new(
-                    plan.path(),
-                    plan.source(),
-                    plan.projection().cloned(),
+                    scan.path(),
+                    scan.source(),
+                    scan.projection().cloned(),
                     new_scan_predicates,
                 ));
                 let new_predicate = zip
@@ -71,6 +71,27 @@ impl PredicatePushDownRule {
                         predicate,
                     )?)),
                     None => Some(new_plan),
+                }
+            }
+            LogicalPlan::Projection(projection) => {
+                let predicates = Self::split_conjunction(&filter.expressions()[0], vec![])
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let projection_expression = projection.expressions().to_vec();
+
+                match Self::conjunction(predicates) {
+                    Some(predicates) => {
+                        let input = projection.input().clone();
+                        let new_filter =
+                            LogicalPlan::Filter(Filter::try_new(Arc::new(input), predicates)?);
+                        let new_plan = LogicalPlan::Projection(Projection::new(
+                            Arc::new(new_filter),
+                            projection_expression,
+                        ));
+                        Some(new_plan)
+                    }
+                    None => None,
                 }
             }
             _ => None,
@@ -124,7 +145,7 @@ mod tests {
         expression::logical::expr_fn::{col, lit},
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::OptimizerRule,
-        plan::logical::{filter::Filter, plan::LogicalPlan, scan::Scan},
+        plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
     };
 
     use super::PredicatePushDownRule;
@@ -135,11 +156,31 @@ mod tests {
         Arc::new(LogicalPlan::Scan(Scan::new(path, source, None, vec![])))
     }
 
-    #[test]
-    fn test_predicate_push_down_with_expression() {
-        let input = create_scan();
+    fn create_filter(input: Arc<LogicalPlan>) -> Arc<LogicalPlan> {
         let predicate = col("c2").eq(lit(5i64));
-        let filter = LogicalPlan::Filter(Filter::try_new(input, predicate).unwrap());
+        Arc::new(LogicalPlan::Filter(
+            Filter::try_new(input, predicate).unwrap(),
+        ))
+    }
+
+    #[test]
+    fn test_predicate_push_down_projection_with_expressions() {
+        let input = create_scan();
+        let input = LogicalPlan::Projection(Projection::new(input, vec![col("c1")]));
+        let filter = create_filter(Arc::new(input));
+
+        let rule = PredicatePushDownRule::new();
+        let result = rule.try_optimize(&filter).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Projection: [c1]\n\tFilter: [c2 = 5]\n\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_predicate_push_down_scan_with_expressions() {
+        let input = create_scan();
+        let filter = create_filter(input);
 
         let rule = PredicatePushDownRule::new();
         let result = rule.try_optimize(&filter).unwrap().unwrap();
