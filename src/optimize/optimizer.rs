@@ -28,6 +28,7 @@ impl Optimizer {
 
     pub fn optimize(&self, plan: &LogicalPlan) -> Result<LogicalPlan> {
         let mut new_plan = plan.clone();
+
         for rule in &self.rules {
             if let Some(optimized) = rule.try_optimize(&new_plan)? {
                 new_plan = optimized;
