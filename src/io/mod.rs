@@ -3,7 +3,9 @@ use std::{fmt::Debug, sync::Arc};
 use arrow::{array::RecordBatch, datatypes::SchemaRef};
 use futures::stream::BoxStream;
 
-use crate::{error::Result, plan::physical::plan::ExecutionPlan};
+use crate::{
+    error::Result, expression::logical::expr::Expression, plan::physical::plan::ExecutionPlan,
+};
 
 pub mod reader;
 pub mod writer;
@@ -21,10 +23,31 @@ pub trait FileOpener {
     fn open(&self, path: &str) -> Result<RecordBatchStream>;
 }
 
+/// Whether and how a filter predicate can be handled
+/// by a [`DataSource`] for scan operations.
+#[derive(Debug)]
+pub enum PredicatePushDownSupport {
+    Unsupported,
+    Inexact,
+    Exact,
+}
+
+/// A trait defining the capabilities of a [`DataSource`] provider.
 pub trait DataSource: Debug + Send + Sync {
     /// A reference-counted [`arrow::datatypes::Schema`].
     fn schema(&self) -> SchemaRef;
 
     /// Creates an [`ExecutionPlan`] to scan the [`DataSource`].
     fn scan(&self, projection: Option<&Vec<String>>) -> Result<Arc<dyn ExecutionPlan>>;
+
+    /// Whether the data source supports predicate pushdown, or not.
+    fn can_pushdown_predicates(
+        &self,
+        expression: &[Expression],
+    ) -> Result<Vec<PredicatePushDownSupport>> {
+        expression
+            .iter()
+            .map(|_| Ok(PredicatePushDownSupport::Unsupported))
+            .collect()
+    }
 }
