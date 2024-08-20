@@ -35,6 +35,11 @@ impl Scan {
         }
     }
 
+    /// Retrieves the filesystem path to the data file.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
     /// A reference-counted [`DataSource`].
     pub fn source(&self) -> Arc<dyn DataSource> {
         self.source.clone()

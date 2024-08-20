@@ -25,7 +25,7 @@ pub trait FileOpener {
 
 /// Whether and how a filter predicate can be handled
 /// by a [`DataSource`] for scan operations.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredicatePushDownSupport {
     Unsupported,
     Inexact,
@@ -43,7 +43,7 @@ pub trait DataSource: Debug + Send + Sync {
     /// Whether the data source supports predicate pushdown, or not.
     fn can_pushdown_predicates(
         &self,
-        expression: &[Expression],
+        expression: &[&Expression],
     ) -> Result<Vec<PredicatePushDownSupport>> {
         expression
             .iter()
