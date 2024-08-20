@@ -4,6 +4,7 @@ pub mod error;
 pub mod execution;
 pub mod expression;
 pub mod io;
+pub mod optimize;
 pub mod plan;
 pub mod utils;
 

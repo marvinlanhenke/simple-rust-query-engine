@@ -6,6 +6,7 @@ use futures::TryStreamExt;
 use crate::{
     error::Result,
     expression::logical::{expr::Expression, expr_fn::col},
+    optimize::optimizer::Optimizer,
     plan::{
         logical::{
             aggregate::Aggregate,
@@ -25,12 +26,18 @@ use crate::{
 pub struct DataFrame {
     /// The [`LogicalPlan`] for the [`DataFrame`].
     plan: LogicalPlan,
+    /// The [`Optimizer`] responsible
+    /// for rewriting a logical plan.
+    optimizer: Optimizer,
 }
 
 impl DataFrame {
     /// Creates a new [`DataFrame`] instance.
     pub fn new(plan: LogicalPlan) -> Self {
-        Self { plan }
+        Self {
+            plan,
+            optimizer: Optimizer::new(),
+        }
     }
 
     /// Displays the dataframe's content in a tabular format.
@@ -41,7 +48,8 @@ impl DataFrame {
 
     /// Collects the results of the query execution as `RecordBatch`'es.
     pub async fn collect(&self) -> Result<Vec<RecordBatch>> {
-        let physical_plan = Planner::create_physical_plan(&self.plan)?;
+        let optimized = self.optimizer.optimize(self.plan.clone())?;
+        let physical_plan = Planner::create_physical_plan(&optimized)?;
         let stream = physical_plan.execute()?;
 
         stream.try_collect().await
@@ -52,7 +60,10 @@ impl DataFrame {
         let input = self.plan;
         let plan = LogicalPlan::Projection(Projection::new(Arc::new(input), columns));
 
-        Self { plan }
+        Self {
+            plan,
+            optimizer: self.optimizer,
+        }
     }
 
     /// Applies a filter predicate on the [`DataFrame`].
@@ -60,7 +71,10 @@ impl DataFrame {
         let input = self.plan;
         let plan = LogicalPlan::Filter(Filter::try_new(Arc::new(input), predicate)?);
 
-        Ok(Self { plan })
+        Ok(Self {
+            plan,
+            optimizer: self.optimizer,
+        })
     }
 
     /// Performs an aggregation operation based on the
@@ -77,7 +91,10 @@ impl DataFrame {
             aggregate_expressions,
         )?);
 
-        Ok(Self { plan })
+        Ok(Self {
+            plan,
+            optimizer: self.optimizer,
+        })
     }
 
     /// Performs an order_by or sort operation based on
@@ -86,7 +103,10 @@ impl DataFrame {
         let input = self.plan;
         let plan = LogicalPlan::Sort(Sort::new(Arc::new(input), expression));
 
-        Self { plan }
+        Self {
+            plan,
+            optimizer: self.optimizer,
+        }
     }
 
     /// Performs a limit operation, skipping rows, and fetching some number of rows.
@@ -94,7 +114,10 @@ impl DataFrame {
         let input = self.plan;
         let plan = LogicalPlan::Limit(Limit::new(Arc::new(input), skip, fetch));
 
-        Self { plan }
+        Self {
+            plan,
+            optimizer: self.optimizer,
+        }
     }
 
     pub fn join(
@@ -113,7 +136,10 @@ impl DataFrame {
 
         let plan = LogicalPlan::Join(Join::new(lhs, rhs, on, join_type, filter));
 
-        Self { plan }
+        Self {
+            plan,
+            optimizer: self.optimizer,
+        }
     }
 }
 
