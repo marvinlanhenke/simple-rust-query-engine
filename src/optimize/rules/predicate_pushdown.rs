@@ -7,7 +7,9 @@ use crate::{
     error::{Error, Result},
     expression::{logical::expr::Expression, operator::Operator},
     io::PredicatePushDownSupport,
-    plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
+    plan::logical::{
+        filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan, sort::Sort,
+    },
 };
 
 use super::OptimizerRule;
@@ -120,6 +122,15 @@ impl PredicatePushDownRule {
 
                 Some(Self::push_down(&new_filter)?.unwrap_or(new_filter))
             }
+            LogicalPlan::Sort(sort) => {
+                let new_filter = LogicalPlan::Filter(Filter::try_new(
+                    Arc::new(sort.input().clone()),
+                    filter.expressions()[0].clone(),
+                )?);
+                let new_plan =
+                    LogicalPlan::Sort(Sort::new(Arc::new(new_filter), sort.expressions().to_vec()));
+                Some(new_plan)
+            }
             _ => None,
         };
 
@@ -168,10 +179,12 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        expression::logical::expr_fn::{col, lit},
+        expression::logical::expr_fn::{col, lit, sort},
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::OptimizerRule,
-        plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
+        plan::logical::{
+            filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan, sort::Sort,
+        },
     };
 
     use super::PredicatePushDownRule;
@@ -194,6 +207,20 @@ mod tests {
         Arc::new(LogicalPlan::Filter(
             Filter::try_new(input, predicate).unwrap(),
         ))
+    }
+
+    #[test]
+    fn test_predicate_push_down_sort() {
+        let input = create_scan();
+        let input = LogicalPlan::Sort(Sort::new(input, vec![sort(col("c1"), true)]));
+        let filter = create_filter(Arc::new(input));
+
+        let rule = PredicatePushDownRule::new();
+        let result = rule.try_optimize(&filter).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Sort: [Sort[c1]]\n\tFilter: [c2 = 5]\n\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
     }
 
     #[test]
