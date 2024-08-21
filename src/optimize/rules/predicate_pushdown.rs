@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use itertools::Itertools;
+use snafu::location;
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     expression::{logical::expr::Expression, operator::Operator},
     io::PredicatePushDownSupport,
     plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
@@ -94,6 +95,31 @@ impl PredicatePushDownRule {
                     None => None,
                 }
             }
+            LogicalPlan::Filter(child_filter) => {
+                let predicates = Self::split_conjunction(&filter.expressions()[0], vec![]);
+                let set: HashSet<&&Expression> = predicates.iter().collect();
+
+                let unique_predicates = predicates
+                    .iter()
+                    .chain(
+                        Self::split_conjunction(&child_filter.expressions()[0], vec![])
+                            .iter()
+                            .filter(|expr| !set.contains(expr)),
+                    )
+                    .map(|expr| (*expr).clone())
+                    .collect::<Vec<_>>();
+                let new_predicate =
+                    Self::conjunction(unique_predicates).ok_or_else(|| Error::InvalidData {
+                        message: "At least one filter expression should exist".to_string(),
+                        location: location!(),
+                    })?;
+                let new_filter = LogicalPlan::Filter(Filter::try_new(
+                    Arc::new(child_filter.input().clone()),
+                    new_predicate,
+                )?);
+
+                Some(Self::push_down(&new_filter)?.unwrap_or(new_filter))
+            }
             _ => None,
         };
 
@@ -161,6 +187,41 @@ mod tests {
         Arc::new(LogicalPlan::Filter(
             Filter::try_new(input, predicate).unwrap(),
         ))
+    }
+
+    fn create_filter2(input: Arc<LogicalPlan>) -> Arc<LogicalPlan> {
+        let predicate = col("c2").lt(lit(5i64)).and(col("c2").gt(lit(10i64)));
+        Arc::new(LogicalPlan::Filter(
+            Filter::try_new(input, predicate).unwrap(),
+        ))
+    }
+
+    #[test]
+    fn test_predicate_push_down_with_nested_filters_duplicate_expression() {
+        let input = create_scan();
+        let input = create_filter(input);
+        let filter = create_filter(input);
+
+        let rule = PredicatePushDownRule::new();
+        let result = rule.try_optimize(&filter).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Filter: [c2 = 5]\n\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_predicate_push_down_with_nested_filters() {
+        let input = create_scan();
+        let input = create_filter(input);
+        let filter = create_filter2(input);
+
+        let rule = PredicatePushDownRule::new();
+        let result = rule.try_optimize(&filter).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Filter: [c2 < 5 AND c2 > 10 AND c2 = 5]\n\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
     }
 
     #[test]
