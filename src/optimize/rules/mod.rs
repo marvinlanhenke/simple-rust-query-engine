@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use crate::{error::Result, plan::logical::plan::LogicalPlan};
 
 pub mod predicate_pushdown;
+pub mod predicate_pushdown_new;
 pub mod projection_pushdown;
 pub mod rewrite_distinct;
 pub mod type_coercion;
