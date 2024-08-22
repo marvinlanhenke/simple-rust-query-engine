@@ -12,13 +12,8 @@ use crate::{
 use super::OptimizerRule;
 
 enum RecursionState {
-    Continue,
-    Stop,
-}
-
-struct RecursionResult {
-    plan: Option<LogicalPlan>,
-    state: RecursionState,
+    Continue(LogicalPlan),
+    Stop(Option<LogicalPlan>),
 }
 
 #[derive(Debug, Default)]
@@ -31,17 +26,10 @@ impl PredicatePushDownRuleNew {
 
     fn push_down(plan: &LogicalPlan) -> Result<Option<LogicalPlan>> {
         let new_plan = match plan {
-            LogicalPlan::Filter(filter) => {
-                let result = Self::push_down_impl(filter)?;
-                match result.state {
-                    RecursionState::Stop => result.plan,
-                    RecursionState::Continue => match result.plan {
-                        Some(res_plan) => Self::push_down(&res_plan)?,
-                        // can this be correct?
-                        None => Some(plan.clone()),
-                    },
-                }
-            }
+            LogicalPlan::Filter(filter) => match Self::push_down_impl(filter)? {
+                RecursionState::Stop(opt_plan) => opt_plan,
+                RecursionState::Continue(plan) => Self::push_down(&plan)?,
+            },
             LogicalPlan::Projection(projection) => {
                 let input =
                     Self::push_down(projection.input())?.unwrap_or(projection.input().clone());
@@ -57,7 +45,7 @@ impl PredicatePushDownRuleNew {
         Ok(new_plan)
     }
 
-    fn push_down_impl(filter: &Filter) -> Result<RecursionResult> {
+    fn push_down_impl(filter: &Filter) -> Result<RecursionState> {
         let child_plan = filter.input();
 
         let new_plan = match child_plan {
@@ -82,7 +70,7 @@ impl PredicatePushDownRuleNew {
                     .unique()
                     .cloned()
                     .collect::<Vec<_>>();
-                let new_plan = LogicalPlan::Scan(Scan::new(
+                let new_scan = LogicalPlan::Scan(Scan::new(
                     scan.path(),
                     scan.source(),
                     scan.projection().cloned(),
@@ -100,19 +88,11 @@ impl PredicatePushDownRuleNew {
 
                 match Self::conjunction(new_predicate) {
                     Some(predicate) => {
-                        let new_filter = Some(LogicalPlan::Filter(Filter::try_new(
-                            Arc::new(new_plan),
-                            predicate,
-                        )?));
-                        RecursionResult {
-                            plan: new_filter,
-                            state: RecursionState::Stop,
-                        }
+                        let new_filter =
+                            LogicalPlan::Filter(Filter::try_new(Arc::new(new_scan), predicate)?);
+                        RecursionState::Stop(Some(new_filter))
                     }
-                    None => RecursionResult {
-                        plan: Some(new_plan),
-                        state: RecursionState::Stop,
-                    },
+                    None => RecursionState::Stop(Some(new_scan)),
                 }
             }
             LogicalPlan::Projection(projection) => {
@@ -127,26 +107,18 @@ impl PredicatePushDownRuleNew {
                         let input = projection.input().clone();
                         let new_filter =
                             LogicalPlan::Filter(Filter::try_new(Arc::new(input), predicates)?);
-                        let new_plan = LogicalPlan::Projection(Projection::new(
+                        let new_projection = LogicalPlan::Projection(Projection::new(
                             Arc::new(new_filter),
                             projection_expression,
                         ));
-                        RecursionResult {
-                            plan: Some(new_plan),
-                            state: RecursionState::Continue,
-                        }
+                        RecursionState::Continue(new_projection)
                     }
-                    None => RecursionResult {
-                        plan: None,
-                        state: RecursionState::Stop,
-                    },
+                    None => RecursionState::Stop(None),
                 }
             }
-            _ => RecursionResult {
-                plan: None,
-                state: RecursionState::Stop,
-            },
+            _ => RecursionState::Stop(None),
         };
+
         Ok(new_plan)
     }
 
