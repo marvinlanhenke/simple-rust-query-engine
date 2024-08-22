@@ -1,12 +1,25 @@
 use std::sync::Arc;
 
+use itertools::Itertools;
+
 use crate::{
     error::Result,
     expression::{logical::expr::Expression, operator::Operator},
-    plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection},
+    io::PredicatePushDownSupport,
+    plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
 };
 
 use super::OptimizerRule;
+
+enum RecursionState {
+    Continue,
+    Stop,
+}
+
+struct RecursionResult {
+    plan: Option<LogicalPlan>,
+    state: RecursionState,
+}
 
 #[derive(Debug, Default)]
 pub struct PredicatePushDownRuleNew;
@@ -18,10 +31,17 @@ impl PredicatePushDownRuleNew {
 
     fn push_down(plan: &LogicalPlan) -> Result<Option<LogicalPlan>> {
         let new_plan = match plan {
-            LogicalPlan::Filter(filter) => match Self::push_down_impl(filter)? {
-                Some(plan) => Self::push_down(&plan)?,
-                None => Some(plan.clone()),
-            },
+            LogicalPlan::Filter(filter) => {
+                let result = Self::push_down_impl(filter)?;
+                match result.state {
+                    RecursionState::Stop => result.plan,
+                    RecursionState::Continue => match result.plan {
+                        Some(res_plan) => Self::push_down(&res_plan)?,
+                        // can this be correct?
+                        None => Some(plan.clone()),
+                    },
+                }
+            }
             LogicalPlan::Projection(projection) => {
                 let input =
                     Self::push_down(projection.input())?.unwrap_or(projection.input().clone());
@@ -37,10 +57,64 @@ impl PredicatePushDownRuleNew {
         Ok(new_plan)
     }
 
-    fn push_down_impl(filter: &Filter) -> Result<Option<LogicalPlan>> {
+    fn push_down_impl(filter: &Filter) -> Result<RecursionResult> {
         let child_plan = filter.input();
 
         let new_plan = match child_plan {
+            LogicalPlan::Scan(scan) => {
+                let predicates = Self::split_conjunction(&filter.expressions()[0], vec![]);
+
+                let supported = scan
+                    .source()
+                    .can_pushdown_predicates(predicates.as_slice())?;
+
+                let zip = predicates.iter().zip(supported);
+                let to_pushdown = zip.clone().filter_map(|(e, s)| {
+                    if s == PredicatePushDownSupport::Unsupported {
+                        return None;
+                    }
+                    Some(*e)
+                });
+                let new_scan_predicates = scan
+                    .expressions()
+                    .iter()
+                    .chain(to_pushdown)
+                    .unique()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let new_plan = LogicalPlan::Scan(Scan::new(
+                    scan.path(),
+                    scan.source(),
+                    scan.projection().cloned(),
+                    new_scan_predicates,
+                ));
+                let new_predicate = zip
+                    .clone()
+                    .filter_map(|(e, s)| {
+                        if s == PredicatePushDownSupport::Exact {
+                            return None;
+                        }
+                        Some((*e).clone())
+                    })
+                    .collect::<Vec<_>>();
+
+                match Self::conjunction(new_predicate) {
+                    Some(predicate) => {
+                        let new_filter = Some(LogicalPlan::Filter(Filter::try_new(
+                            Arc::new(new_plan),
+                            predicate,
+                        )?));
+                        RecursionResult {
+                            plan: new_filter,
+                            state: RecursionState::Stop,
+                        }
+                    }
+                    None => RecursionResult {
+                        plan: Some(new_plan),
+                        state: RecursionState::Stop,
+                    },
+                }
+            }
             LogicalPlan::Projection(projection) => {
                 let predicates = Self::split_conjunction(&filter.expressions()[0], vec![])
                     .into_iter()
@@ -57,12 +131,21 @@ impl PredicatePushDownRuleNew {
                             Arc::new(new_filter),
                             projection_expression,
                         ));
-                        Some(new_plan)
+                        RecursionResult {
+                            plan: Some(new_plan),
+                            state: RecursionState::Continue,
+                        }
                     }
-                    None => None,
+                    None => RecursionResult {
+                        plan: None,
+                        state: RecursionState::Stop,
+                    },
                 }
             }
-            _ => None,
+            _ => RecursionResult {
+                plan: None,
+                state: RecursionState::Stop,
+            },
         };
         Ok(new_plan)
     }
