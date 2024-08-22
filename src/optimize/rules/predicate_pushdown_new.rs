@@ -1,13 +1,22 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use itertools::Itertools;
 use snafu::location;
 
 use crate::{
     error::{Error, Result},
-    expression::{logical::expr::Expression, operator::Operator},
+    expression::{
+        logical::{column::Column, expr::Expression},
+        operator::Operator,
+    },
     io::PredicatePushDownSupport,
-    plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
+    plan::logical::{
+        aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection,
+        scan::Scan, sort::Sort,
+    },
 };
 
 use super::OptimizerRule;
@@ -38,6 +47,21 @@ impl PredicatePushDownRuleNew {
                     Arc::new(input),
                     projection.expressions().to_vec(),
                 ));
+                Some(new_plan)
+            }
+            LogicalPlan::Sort(sort) => {
+                let input = Self::push_down(sort.input())?.unwrap_or(sort.input().clone());
+                let new_plan =
+                    LogicalPlan::Sort(Sort::new(Arc::new(input), sort.expressions().to_vec()));
+                Some(new_plan)
+            }
+            LogicalPlan::Aggregate(agg) => {
+                let input = Self::push_down(agg.input())?.unwrap_or(agg.input().clone());
+                let new_plan = LogicalPlan::Aggregate(Aggregate::try_new(
+                    Arc::new(input),
+                    agg.group_by().to_vec(),
+                    agg.aggregate_expressions().to_vec(),
+                )?);
                 Some(new_plan)
             }
             _ => None,
@@ -141,10 +165,103 @@ impl PredicatePushDownRuleNew {
                 )?);
                 RecursionState::Continue(new_filter)
             }
+            LogicalPlan::Sort(sort) => {
+                let new_filter = LogicalPlan::Filter(Filter::try_new(
+                    Arc::new(sort.input().clone()),
+                    filter.expressions()[0].clone(),
+                )?);
+                let new_plan =
+                    LogicalPlan::Sort(Sort::new(Arc::new(new_filter), sort.expressions().to_vec()));
+                RecursionState::Continue(new_plan)
+            }
+            LogicalPlan::Aggregate(agg) => {
+                let group_by_cols = agg
+                    .group_by()
+                    .iter()
+                    .map(|expr| Ok(Column::new(expr.display_name()?)))
+                    .collect::<Result<HashSet<_>>>()?;
+                let predicates = Self::split_conjunction(&filter.expressions()[0], vec![])
+                    .iter()
+                    .map(|expr| (*expr).clone())
+                    .collect::<Vec<_>>();
+
+                let mut replace_map = HashMap::new();
+                for expr in agg.group_by() {
+                    replace_map.insert(expr.display_name()?, expr.clone());
+                }
+
+                let mut to_push = vec![];
+                let mut to_keep = vec![];
+                for expr in predicates {
+                    let mut columns = HashSet::new();
+                    Self::collect_columns(&expr, &mut columns);
+                    if columns.iter().all(|col| group_by_cols.contains(col)) {
+                        to_push.push(expr)
+                    } else {
+                        to_keep.push(expr)
+                    }
+                }
+
+                let to_push_replaced = to_push
+                    .into_iter()
+                    .map(|expr| {
+                        if let Expression::Column(col) = &expr {
+                            match replace_map.get(col.name()) {
+                                Some(new_col_expr) => new_col_expr.clone(),
+                                None => expr,
+                            }
+                        } else {
+                            expr
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                // Create a new `Filter` with
+                // the child plan of the aggregate plan and push it down
+                let new_plan = match Self::conjunction(to_push_replaced) {
+                    Some(predicate) => {
+                        let new_filter = LogicalPlan::Filter(Filter::try_new(
+                            Arc::new(agg.input().clone()),
+                            predicate,
+                        )?);
+                        LogicalPlan::Aggregate(Aggregate::try_new(
+                            Arc::new(new_filter),
+                            agg.group_by().to_vec(),
+                            agg.aggregate_expressions().to_vec(),
+                        )?)
+                    }
+                    None => child_plan.clone(),
+                };
+                // Wrap 'new' aggregate plan with `Filter`
+                // for the remaining filters that cannot be pushed
+                match Self::conjunction(to_keep) {
+                    Some(predicate) => {
+                        let new_filter =
+                            LogicalPlan::Filter(Filter::try_new(Arc::new(new_plan), predicate)?);
+                        RecursionState::Stop(Some(new_filter))
+                    }
+                    None => RecursionState::Stop(Some(new_plan)),
+                }
+            }
             _ => RecursionState::Stop(None),
         };
 
         Ok(new_plan)
+    }
+
+    /// Recursively collect all referenced columns from the expression.
+    fn collect_columns(expr: &Expression, columns: &mut HashSet<Column>) {
+        use Expression::*;
+
+        match expr {
+            Column(e) => {
+                columns.insert(e.clone());
+            }
+            Binary(e) => {
+                Self::collect_columns(e.lhs(), columns);
+                Self::collect_columns(e.rhs(), columns);
+            }
+            _ => {}
+        }
     }
 
     /// Splits a conjunction expression into its separate parts.
@@ -191,11 +308,14 @@ mod tests {
     use crate::{
         expression::logical::{
             expr::Expression,
-            expr_fn::{col, lit},
+            expr_fn::{col, lit, sort, sum},
         },
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::{predicate_pushdown_new::PredicatePushDownRuleNew, OptimizerRule},
-        plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
+        plan::logical::{
+            aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection,
+            scan::Scan, sort::Sort,
+        },
     };
 
     fn create_scan() -> Arc<LogicalPlan> {
@@ -229,6 +349,41 @@ mod tests {
         let rule = PredicatePushDownRuleNew::new();
         let result = rule.try_optimize(&input).unwrap().unwrap();
         println!("{result}");
+    }
+
+    #[test]
+    fn test_predicate_push_down_aggregate() {
+        let input = create_scan();
+        let input = Arc::new(LogicalPlan::Aggregate(
+            Aggregate::try_new(input, vec![col("c2")], vec![sum(col("c3"))]).unwrap(),
+        ));
+        let predicate = col("c2").gt(lit(5i64));
+        let input = create_filter(input, predicate);
+
+        let rule = PredicatePushDownRuleNew::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Aggregate: groupBy:[c2]; aggrExprs:[SUM(c3)]\n\tFilter: [c2 > 5]\n\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_predicate_push_down_sort() {
+        let input = create_scan();
+        let input = Arc::new(LogicalPlan::Sort(Sort::new(
+            input,
+            vec![sort(col("c1"), true)],
+        )));
+        let predicate = col("c2").eq(lit(5i64));
+        let input = create_filter(input, predicate);
+
+        let rule = PredicatePushDownRuleNew::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Sort: [Sort[c1]]\n\tFilter: [c2 = 5]\n\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
     }
 
     #[test]
