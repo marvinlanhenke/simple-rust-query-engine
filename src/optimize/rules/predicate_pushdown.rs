@@ -21,6 +21,11 @@ use crate::{
 
 use super::OptimizerRule;
 
+enum RecursionState {
+    Continue(LogicalPlan),
+    Stop(Option<LogicalPlan>),
+}
+
 #[derive(Debug, Default)]
 pub struct PredicatePushDownRule;
 
@@ -30,11 +35,42 @@ impl PredicatePushDownRule {
     }
 
     fn push_down(plan: &LogicalPlan) -> Result<Option<LogicalPlan>> {
-        let filter = match plan {
-            LogicalPlan::Filter(filter) => filter,
-            _ => return Ok(None),
+        let new_plan = match plan {
+            LogicalPlan::Filter(filter) => match Self::push_down_impl(filter)? {
+                RecursionState::Stop(opt_plan) => opt_plan,
+                RecursionState::Continue(plan) => Self::push_down(&plan)?,
+            },
+            LogicalPlan::Projection(projection) => {
+                let input =
+                    Self::push_down(projection.input())?.unwrap_or(projection.input().clone());
+                let new_plan = LogicalPlan::Projection(Projection::new(
+                    Arc::new(input),
+                    projection.expressions().to_vec(),
+                ));
+                Some(new_plan)
+            }
+            LogicalPlan::Sort(sort) => {
+                let input = Self::push_down(sort.input())?.unwrap_or(sort.input().clone());
+                let new_plan =
+                    LogicalPlan::Sort(Sort::new(Arc::new(input), sort.expressions().to_vec()));
+                Some(new_plan)
+            }
+            LogicalPlan::Aggregate(agg) => {
+                let input = Self::push_down(agg.input())?.unwrap_or(agg.input().clone());
+                let new_plan = LogicalPlan::Aggregate(Aggregate::try_new(
+                    Arc::new(input),
+                    agg.group_by().to_vec(),
+                    agg.aggregate_expressions().to_vec(),
+                )?);
+                Some(new_plan)
+            }
+            _ => None,
         };
 
+        Ok(new_plan)
+    }
+
+    fn push_down_impl(filter: &Filter) -> Result<RecursionState> {
         let child_plan = filter.input();
 
         let new_plan = match child_plan {
@@ -59,7 +95,7 @@ impl PredicatePushDownRule {
                     .unique()
                     .cloned()
                     .collect::<Vec<_>>();
-                let new_plan = LogicalPlan::Scan(Scan::new(
+                let new_scan = LogicalPlan::Scan(Scan::new(
                     scan.path(),
                     scan.source(),
                     scan.projection().cloned(),
@@ -76,11 +112,12 @@ impl PredicatePushDownRule {
                     .collect::<Vec<_>>();
 
                 match Self::conjunction(new_predicate) {
-                    Some(predicate) => Some(LogicalPlan::Filter(Filter::try_new(
-                        Arc::new(new_plan),
-                        predicate,
-                    )?)),
-                    None => Some(new_plan),
+                    Some(predicate) => {
+                        let new_filter =
+                            LogicalPlan::Filter(Filter::try_new(Arc::new(new_scan), predicate)?);
+                        RecursionState::Stop(Some(new_filter))
+                    }
+                    None => RecursionState::Stop(Some(new_scan)),
                 }
             }
             LogicalPlan::Projection(projection) => {
@@ -95,13 +132,13 @@ impl PredicatePushDownRule {
                         let input = projection.input().clone();
                         let new_filter =
                             LogicalPlan::Filter(Filter::try_new(Arc::new(input), predicates)?);
-                        let new_plan = LogicalPlan::Projection(Projection::new(
+                        let new_projection = LogicalPlan::Projection(Projection::new(
                             Arc::new(new_filter),
                             projection_expression,
                         ));
-                        Some(new_plan)
+                        RecursionState::Continue(new_projection)
                     }
-                    None => None,
+                    None => RecursionState::Stop(None),
                 }
             }
             LogicalPlan::Filter(child_filter) => {
@@ -126,8 +163,7 @@ impl PredicatePushDownRule {
                     Arc::new(child_filter.input().clone()),
                     new_predicate,
                 )?);
-
-                Some(Self::push_down(&new_filter)?.unwrap_or(new_filter))
+                RecursionState::Continue(new_filter)
             }
             LogicalPlan::Sort(sort) => {
                 let new_filter = LogicalPlan::Filter(Filter::try_new(
@@ -136,7 +172,7 @@ impl PredicatePushDownRule {
                 )?);
                 let new_plan =
                     LogicalPlan::Sort(Sort::new(Arc::new(new_filter), sort.expressions().to_vec()));
-                Some(new_plan)
+                RecursionState::Continue(new_plan)
             }
             LogicalPlan::Aggregate(agg) => {
                 let group_by_cols = agg
@@ -198,14 +234,15 @@ impl PredicatePushDownRule {
                 // Wrap 'new' aggregate plan with `Filter`
                 // for the remaining filters that cannot be pushed
                 match Self::conjunction(to_keep) {
-                    Some(predicate) => Some(LogicalPlan::Filter(Filter::try_new(
-                        Arc::new(new_plan),
-                        predicate,
-                    )?)),
-                    None => Some(new_plan),
+                    Some(predicate) => {
+                        let new_filter =
+                            LogicalPlan::Filter(Filter::try_new(Arc::new(new_plan), predicate)?);
+                        RecursionState::Stop(Some(new_filter))
+                    }
+                    None => RecursionState::Continue(new_plan),
                 }
             }
-            _ => None,
+            _ => RecursionState::Stop(None),
         };
 
         Ok(new_plan)
@@ -274,14 +311,12 @@ mod tests {
             expr_fn::{col, lit, sort, sum},
         },
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
-        optimize::rules::OptimizerRule,
+        optimize::rules::{predicate_pushdown::PredicatePushDownRule, OptimizerRule},
         plan::logical::{
             aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection,
             scan::Scan, sort::Sort,
         },
     };
-
-    use super::PredicatePushDownRule;
 
     fn create_scan() -> Arc<LogicalPlan> {
         let path = "testdata/csv/simple.csv";
@@ -296,16 +331,70 @@ mod tests {
     }
 
     #[test]
-    fn test_predicate_push_down_aggregate() {
+    fn test_predicate_pushdown_multiple_nested_filters_with_aggregate_keep() {
         let input = create_scan();
-        let input = LogicalPlan::Aggregate(
+        let input = Arc::new(LogicalPlan::Projection(Projection::new(
+            input,
+            vec![col("c2")],
+        )));
+        let predicate = col("c2").eq(lit(5i64));
+        let input = create_filter(input, predicate);
+        let input = Arc::new(LogicalPlan::Aggregate(
             Aggregate::try_new(input, vec![col("c2")], vec![sum(col("c3"))]).unwrap(),
-        );
-        let predicate = col("c2").gt(lit(5i64));
-        let filter = create_filter(Arc::new(input), predicate);
+        ));
+        let input = Arc::new(LogicalPlan::Sort(Sort::new(
+            input,
+            vec![sort(col("c2"), true)],
+        )));
+        let predicate = col("SUM(c3)").gt(lit(3i64));
+        let input = create_filter(input, predicate);
 
         let rule = PredicatePushDownRule::new();
-        let result = rule.try_optimize(&filter).unwrap().unwrap();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Sort: [Sort[c2]]\n\tFilter: [SUM(c3) > 3]\n\t\tAggregate: groupBy:[c2]; aggrExprs:[SUM(c3)]\n\t\t\tFilter: [c2 = 5]\n\t\t\t\tProjection: [c2]\n\t\t\t\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_predicate_pushdown_multiple_nested_filters_with_aggregate() {
+        let input = create_scan();
+        let input = Arc::new(LogicalPlan::Projection(Projection::new(
+            input,
+            vec![col("c2")],
+        )));
+        let predicate = col("c2").eq(lit(5i64));
+        let input = create_filter(input, predicate);
+        let input = Arc::new(LogicalPlan::Aggregate(
+            Aggregate::try_new(input, vec![col("c2")], vec![sum(col("c3"))]).unwrap(),
+        ));
+        let input = Arc::new(LogicalPlan::Sort(Sort::new(
+            input,
+            vec![sort(col("c2"), true)],
+        )));
+        let predicate = col("c2").gt(lit(3i64));
+        let input = create_filter(input, predicate);
+
+        let rule = PredicatePushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Sort: [Sort[c2]]\n\tAggregate: groupBy:[c2]; aggrExprs:[SUM(c3)]\n\t\tProjection: [c2]\n\t\t\tFilter: [c2 > 3 AND c2 = 5]\n\t\t\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_predicate_push_down_aggregate() {
+        let input = create_scan();
+        let input = Arc::new(LogicalPlan::Aggregate(
+            Aggregate::try_new(input, vec![col("c2")], vec![sum(col("c3"))]).unwrap(),
+        ));
+        let predicate = col("c2").gt(lit(5i64));
+        let input = create_filter(input, predicate);
+
+        let rule = PredicatePushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
         assert_eq!(
             format!("{}", result),
             "Aggregate: groupBy:[c2]; aggrExprs:[SUM(c3)]\n\tFilter: [c2 > 5]\n\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
@@ -315,30 +404,18 @@ mod tests {
     #[test]
     fn test_predicate_push_down_sort() {
         let input = create_scan();
-        let input = LogicalPlan::Sort(Sort::new(input, vec![sort(col("c1"), true)]));
+        let input = Arc::new(LogicalPlan::Sort(Sort::new(
+            input,
+            vec![sort(col("c1"), true)],
+        )));
         let predicate = col("c2").eq(lit(5i64));
-        let filter = create_filter(Arc::new(input), predicate);
+        let input = create_filter(input, predicate);
 
         let rule = PredicatePushDownRule::new();
-        let result = rule.try_optimize(&filter).unwrap().unwrap();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
         assert_eq!(
             format!("{}", result),
             "Sort: [Sort[c1]]\n\tFilter: [c2 = 5]\n\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
-        );
-    }
-
-    #[test]
-    fn test_predicate_push_down_with_nested_filters_duplicate_expression() {
-        let input = create_scan();
-        let predicate = col("c2").eq(lit(5i64));
-        let input = create_filter(input, predicate.clone());
-        let filter = create_filter(input, predicate);
-
-        let rule = PredicatePushDownRule::new();
-        let result = rule.try_optimize(&filter).unwrap().unwrap();
-        assert_eq!(
-            format!("{}", result),
-            "Filter: [c2 = 5]\n\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
         );
     }
 
@@ -348,10 +425,10 @@ mod tests {
         let predicate = col("c2").eq(lit(5i64));
         let input = create_filter(input, predicate);
         let predicate = col("c2").lt(lit(5i64)).and(col("c2").gt(lit(10i64)));
-        let filter = create_filter(input, predicate);
+        let input = create_filter(input, predicate);
 
         let rule = PredicatePushDownRule::new();
-        let result = rule.try_optimize(&filter).unwrap().unwrap();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
         assert_eq!(
             format!("{}", result),
             "Filter: [c2 < 5 AND c2 > 10 AND c2 = 5]\n\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
@@ -361,12 +438,15 @@ mod tests {
     #[test]
     fn test_predicate_push_down_projection_with_expressions() {
         let input = create_scan();
-        let input = LogicalPlan::Projection(Projection::new(input, vec![col("c1")]));
+        let input = Arc::new(LogicalPlan::Projection(Projection::new(
+            input,
+            vec![col("c1")],
+        )));
         let predicate = col("c2").eq(lit(5i64));
-        let filter = create_filter(Arc::new(input), predicate);
+        let input = create_filter(input, predicate);
 
         let rule = PredicatePushDownRule::new();
-        let result = rule.try_optimize(&filter).unwrap().unwrap();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
         assert_eq!(
             format!("{}", result),
             "Projection: [c1]\n\tFilter: [c2 = 5]\n\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
@@ -377,10 +457,10 @@ mod tests {
     fn test_predicate_push_down_scan_with_expressions() {
         let input = create_scan();
         let predicate = col("c2").eq(lit(5i64));
-        let filter = create_filter(input, predicate);
+        let input = create_filter(input, predicate);
 
         let rule = PredicatePushDownRule::new();
-        let result = rule.try_optimize(&filter).unwrap().unwrap();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
         assert_eq!(
             format!("{}", result),
             "Filter: [c2 = 5]\n\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
