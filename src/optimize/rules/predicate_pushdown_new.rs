@@ -239,7 +239,7 @@ impl PredicatePushDownRuleNew {
                             LogicalPlan::Filter(Filter::try_new(Arc::new(new_plan), predicate)?);
                         RecursionState::Stop(Some(new_filter))
                     }
-                    None => RecursionState::Stop(Some(new_plan)),
+                    None => RecursionState::Continue(new_plan),
                 }
             }
             _ => RecursionState::Stop(None),
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stub() {
+    fn test_predicate_pushdown_multiple_nested_filters_with_aggregate_keep() {
         let input = create_scan();
         let input = Arc::new(LogicalPlan::Projection(Projection::new(
             input,
@@ -339,16 +339,49 @@ mod tests {
         )));
         let predicate = col("c2").eq(lit(5i64));
         let input = create_filter(input, predicate);
-        let input = Arc::new(LogicalPlan::Projection(Projection::new(
+        let input = Arc::new(LogicalPlan::Aggregate(
+            Aggregate::try_new(input, vec![col("c2")], vec![sum(col("c3"))]).unwrap(),
+        ));
+        let input = Arc::new(LogicalPlan::Sort(Sort::new(
             input,
-            vec![col("c1")],
+            vec![sort(col("c2"), true)],
         )));
-
-        println!("before >> {input}");
+        let predicate = col("SUM(c3)").gt(lit(3i64));
+        let input = create_filter(input, predicate);
 
         let rule = PredicatePushDownRuleNew::new();
         let result = rule.try_optimize(&input).unwrap().unwrap();
-        println!("{result}");
+        assert_eq!(
+            format!("{}", result),
+            "Sort: [Sort[c2]]\n\tFilter: [SUM(c3) > 3]\n\t\tAggregate: groupBy:[c2]; aggrExprs:[SUM(c3)]\n\t\t\tFilter: [c2 = 5]\n\t\t\t\tProjection: [c2]\n\t\t\t\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_predicate_pushdown_multiple_nested_filters_with_aggregate() {
+        let input = create_scan();
+        let input = Arc::new(LogicalPlan::Projection(Projection::new(
+            input,
+            vec![col("c2")],
+        )));
+        let predicate = col("c2").eq(lit(5i64));
+        let input = create_filter(input, predicate);
+        let input = Arc::new(LogicalPlan::Aggregate(
+            Aggregate::try_new(input, vec![col("c2")], vec![sum(col("c3"))]).unwrap(),
+        ));
+        let input = Arc::new(LogicalPlan::Sort(Sort::new(
+            input,
+            vec![sort(col("c2"), true)],
+        )));
+        let predicate = col("c2").gt(lit(3i64));
+        let input = create_filter(input, predicate);
+
+        let rule = PredicatePushDownRuleNew::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Sort: [Sort[c2]]\n\tAggregate: groupBy:[c2]; aggrExprs:[SUM(c3)]\n\t\tProjection: [c2]\n\t\t\tFilter: [c2 > 3 AND c2 = 5]\n\t\t\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
     }
 
     #[test]
