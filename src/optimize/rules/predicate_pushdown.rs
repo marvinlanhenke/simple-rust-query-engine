@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use arrow_schema::Schema;
 use itertools::Itertools;
 use snafu::location;
 
@@ -14,8 +15,13 @@ use crate::{
     },
     io::PredicatePushDownSupport,
     plan::logical::{
-        aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection,
-        scan::Scan, sort::Sort,
+        aggregate::Aggregate,
+        filter::Filter,
+        join::{Join, JoinType},
+        plan::LogicalPlan,
+        projection::Projection,
+        scan::Scan,
+        sort::Sort,
     },
 };
 
@@ -246,6 +252,135 @@ impl PredicatePushDownRule {
         };
 
         Ok(new_plan)
+    }
+
+    fn push_down_join(join: Join, parent_predicate: Option<&Expression>) -> Result<RecursionState> {
+        let predicates = parent_predicate
+            .map_or_else(Vec::new, |expr| Self::split_conjunction(expr, vec![]))
+            .iter()
+            .map(|expr| (*expr).clone())
+            .collect::<Vec<_>>();
+        let on_predicates = join
+            .filter()
+            .map_or_else(Vec::new, |expr| Self::split_conjunction(expr, vec![]))
+            .iter()
+            .map(|expr| (*expr).clone())
+            .collect::<Vec<_>>();
+        let inferred_join_predicates =
+            Self::infer_join_predicates(&join, &predicates, &on_predicates)?;
+
+        if predicates.is_empty() && on_predicates.is_empty() && inferred_join_predicates.is_empty()
+        {
+            return Ok(RecursionState::Continue(LogicalPlan::Join(join.clone())));
+        }
+
+        let is_inner_join = join.join_type() == JoinType::Inner;
+        let (lhs_preserved, rhs_preserved) = Self::preserved_join_side(join.join_type(), false);
+        let lhs_schema = join.lhs().schema();
+        let rhs_schema = join.rhs().schema();
+        let mut lhs_to_push = vec![];
+        let mut rhs_to_push = vec![];
+        let mut keep_predicates = vec![];
+        let mut join_conditions = vec![];
+        for predicate in predicates {
+            if lhs_preserved && Self::can_pushdown_predicate(&predicate, &lhs_schema)? {
+                lhs_to_push.push(predicate);
+            } else if rhs_preserved && Self::can_pushdown_predicate(&predicate, &rhs_schema)? {
+                rhs_to_push.push(predicate);
+            } else if is_inner_join && Self::can_evaluate_as_join_condition(&predicate)? {
+                join_conditions.push(predicate);
+            } else {
+                keep_predicates.push(predicate);
+            }
+        }
+
+        for predicate in inferred_join_predicates {
+            if lhs_preserved && Self::can_pushdown_predicate(&predicate, &lhs_schema)? {
+                lhs_to_push.push(predicate);
+            } else if rhs_preserved && Self::can_pushdown_predicate(&predicate, &rhs_schema)? {
+                rhs_to_push.push(predicate);
+            }
+        }
+
+        if !on_predicates.is_empty() {
+            let (lhs_on_preserved, rhs_on_preserved) =
+                Self::preserved_join_side(join.join_type(), true);
+            for on in on_predicates {
+                if lhs_on_preserved && Self::can_pushdown_predicate(&on, &lhs_schema)? {
+                    lhs_to_push.push(on);
+                } else if rhs_on_preserved && Self::can_pushdown_predicate(&on, &rhs_schema)? {
+                    rhs_to_push.push(on);
+                } else {
+                    join_conditions.push(on);
+                }
+            }
+        }
+
+        if lhs_preserved {
+            lhs_to_push.extend(Self::extract_join_or_clauses(&keep_predicates, &lhs_schema));
+            lhs_to_push.extend(Self::extract_join_or_clauses(&join_conditions, &lhs_schema));
+        }
+        if rhs_preserved {
+            rhs_to_push.extend(Self::extract_join_or_clauses(&keep_predicates, &rhs_schema));
+            rhs_to_push.extend(Self::extract_join_or_clauses(&join_conditions, &rhs_schema));
+        }
+
+        let new_lhs_plan = match Self::conjunction(lhs_to_push) {
+            Some(predicate) => {
+                LogicalPlan::Filter(Filter::try_new(Arc::new(join.lhs().clone()), predicate)?)
+            }
+            None => join.lhs().clone(),
+        };
+        let new_rhs_plan = match Self::conjunction(rhs_to_push) {
+            Some(predicate) => {
+                LogicalPlan::Filter(Filter::try_new(Arc::new(join.rhs().clone()), predicate)?)
+            }
+            None => join.lhs().clone(),
+        };
+
+        let new_join_plan = LogicalPlan::Join(Join::new(
+            Arc::new(new_lhs_plan),
+            Arc::new(new_rhs_plan),
+            join.on().to_vec(),
+            join.join_type(),
+            Self::conjunction(join_conditions),
+        ));
+
+        match Self::conjunction(keep_predicates) {
+            Some(predicate) => {
+                let new_filter =
+                    LogicalPlan::Filter(Filter::try_new(Arc::new(new_join_plan), predicate)?);
+                Ok(RecursionState::Stop(Some(new_filter)))
+            }
+            None => Ok(RecursionState::Continue(new_join_plan)),
+        }
+    }
+
+    fn infer_join_predicates(
+        join: &Join,
+        predicates: &[Expression],
+        on_predicates: &[Expression],
+    ) -> Result<Vec<Expression>> {
+        todo!()
+    }
+
+    fn preserved_join_side(join_type: JoinType, is_on: bool) -> (bool, bool) {
+        match join_type {
+            JoinType::Inner => (true, true),
+            JoinType::Left => (!is_on, is_on),
+        }
+    }
+
+    fn can_pushdown_predicate(predicate: &Expression, schema: &Schema) -> Result<bool> {
+        todo!()
+    }
+
+    fn can_evaluate_as_join_condition(predicate: &Expression) -> Result<bool> {
+        todo!()
+    }
+
+    fn extract_join_or_clauses(predicates: &[Expression], schema: &Schema) -> Vec<Expression> {
+        todo!()
     }
 
     /// Recursively collect all referenced columns from the expression.

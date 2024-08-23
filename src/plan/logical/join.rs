@@ -7,7 +7,7 @@ use crate::expression::logical::expr::Expression;
 use super::plan::LogicalPlan;
 
 /// Enum representing the type of join operation.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JoinType {
     Inner,
     Left,
