@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{error::Result, plan::logical::plan::LogicalPlan};
 
-use super::rules::OptimizerRule;
+use super::rules::{predicate_pushdown::PredicatePushDownRule, OptimizerRule};
 
 #[derive(Debug)]
 pub struct Optimizer {
@@ -17,7 +17,7 @@ impl Default for Optimizer {
 
 impl Optimizer {
     pub fn new() -> Self {
-        let rules = vec![];
+        let rules: Vec<Arc<dyn OptimizerRule>> = vec![Arc::new(PredicatePushDownRule::new())];
 
         Self::with_rules(rules)
     }
