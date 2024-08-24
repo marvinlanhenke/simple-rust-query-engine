@@ -281,11 +281,8 @@ impl PredicatePushDownRule {
             .iter()
             .map(|expr| (*expr).clone())
             .collect::<Vec<_>>();
-        let inferred_join_predicates =
-            Self::infer_join_predicates(&join, &predicates, &on_predicates);
 
-        if predicates.is_empty() && on_predicates.is_empty() && inferred_join_predicates.is_empty()
-        {
+        if predicates.is_empty() && on_predicates.is_empty() {
             return Ok(RecursionState::Continue(LogicalPlan::Join(join.clone())));
         }
 
@@ -306,14 +303,6 @@ impl PredicatePushDownRule {
                 join_conditions.push(predicate);
             } else {
                 keep_predicates.push(predicate);
-            }
-        }
-
-        for predicate in inferred_join_predicates {
-            if lhs_preserved && Self::can_pushdown_predicate(&predicate, &lhs_schema) {
-                lhs_to_push.push(predicate);
-            } else if rhs_preserved && Self::can_pushdown_predicate(&predicate, &rhs_schema) {
-                rhs_to_push.push(predicate);
             }
         }
 
@@ -369,53 +358,6 @@ impl PredicatePushDownRule {
             }
             None => Ok(RecursionState::Continue(new_join_plan)),
         }
-    }
-
-    fn infer_join_predicates(
-        join: &Join,
-        predicates: &[Expression],
-        on_predicates: &[Expression],
-    ) -> Vec<Expression> {
-        if join.join_type() != JoinType::Inner {
-            return vec![];
-        }
-
-        let join_on_columns = join
-            .on()
-            .iter()
-            .flat_map(|(lhs, rhs)| {
-                let mut left = HashSet::new();
-                let mut right = HashSet::new();
-                Self::collect_columns(lhs, &mut left);
-                Self::collect_columns(rhs, &mut right);
-                Some(left.into_iter().zip(right).collect::<Vec<_>>())
-            })
-            .flatten()
-            .collect::<Vec<_>>();
-
-        let predicate_columns = predicates
-            .iter()
-            .chain(on_predicates)
-            .flat_map(|expr| {
-                let mut columns = HashSet::new();
-                Self::collect_columns(expr, &mut columns);
-                columns.into_iter().collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-
-        let mut result: Vec<Expression> = Vec::new();
-        for pred_col in &predicate_columns {
-            for (left, right) in &join_on_columns {
-                if pred_col == left {
-                    result.push(Expression::Column(right.clone()));
-                    break;
-                } else if pred_col == right {
-                    result.push(Expression::Column(left.clone()));
-                    break;
-                }
-            }
-        }
-        result
     }
 
     fn preserved_join_side(join_type: JoinType, is_on: bool) -> (bool, bool) {
