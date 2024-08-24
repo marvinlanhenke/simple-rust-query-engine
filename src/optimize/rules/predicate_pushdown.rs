@@ -283,9 +283,9 @@ impl PredicatePushDownRule {
         let mut keep_predicates = vec![];
         let mut join_conditions = vec![];
         for predicate in predicates {
-            if lhs_preserved && Self::can_pushdown_predicate(&predicate, &lhs_schema)? {
+            if lhs_preserved && Self::can_pushdown_predicate(&predicate, &lhs_schema) {
                 lhs_to_push.push(predicate);
-            } else if rhs_preserved && Self::can_pushdown_predicate(&predicate, &rhs_schema)? {
+            } else if rhs_preserved && Self::can_pushdown_predicate(&predicate, &rhs_schema) {
                 rhs_to_push.push(predicate);
             } else if is_inner_join && Self::can_evaluate_as_join_condition(&predicate)? {
                 join_conditions.push(predicate);
@@ -295,9 +295,9 @@ impl PredicatePushDownRule {
         }
 
         for predicate in inferred_join_predicates {
-            if lhs_preserved && Self::can_pushdown_predicate(&predicate, &lhs_schema)? {
+            if lhs_preserved && Self::can_pushdown_predicate(&predicate, &lhs_schema) {
                 lhs_to_push.push(predicate);
-            } else if rhs_preserved && Self::can_pushdown_predicate(&predicate, &rhs_schema)? {
+            } else if rhs_preserved && Self::can_pushdown_predicate(&predicate, &rhs_schema) {
                 rhs_to_push.push(predicate);
             }
         }
@@ -306,9 +306,9 @@ impl PredicatePushDownRule {
             let (lhs_on_preserved, rhs_on_preserved) =
                 Self::preserved_join_side(join.join_type(), true);
             for on in on_predicates {
-                if lhs_on_preserved && Self::can_pushdown_predicate(&on, &lhs_schema)? {
+                if lhs_on_preserved && Self::can_pushdown_predicate(&on, &lhs_schema) {
                     lhs_to_push.push(on);
-                } else if rhs_on_preserved && Self::can_pushdown_predicate(&on, &rhs_schema)? {
+                } else if rhs_on_preserved && Self::can_pushdown_predicate(&on, &rhs_schema) {
                     rhs_to_push.push(on);
                 } else {
                     join_conditions.push(on);
@@ -371,8 +371,20 @@ impl PredicatePushDownRule {
         }
     }
 
-    fn can_pushdown_predicate(predicate: &Expression, schema: &Schema) -> Result<bool> {
-        todo!()
+    fn can_pushdown_predicate(predicate: &Expression, schema: &Schema) -> bool {
+        let schema_columns = schema
+            .fields()
+            .iter()
+            .map(|f| Column::new(f.name()))
+            .collect::<HashSet<_>>();
+        let mut columns = HashSet::new();
+        Self::collect_columns(predicate, &mut columns);
+
+        schema_columns
+            .intersection(&columns)
+            .collect::<HashSet<_>>()
+            .len()
+            == columns.len()
     }
 
     fn can_evaluate_as_join_condition(predicate: &Expression) -> Result<bool> {
