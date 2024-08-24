@@ -595,10 +595,31 @@ mod tests {
     }
 
     #[test]
-    fn test_predicate_push_down_join() {
+    fn test_predicate_push_down_inner_join() {
         let lhs = create_scan();
-        let predicate = col("c2").eq(lit(4i64));
-        let lhs = create_filter(lhs, predicate);
+        let rhs = create_scan();
+
+        let input = Arc::new(LogicalPlan::Join(Join::new(
+            lhs,
+            rhs,
+            vec![(col("c1"), col("c1"))],
+            JoinType::Inner,
+            None,
+        )));
+        let predicate = col("c2").eq(lit(5i64));
+        let input = create_filter(input, predicate);
+
+        let rule = PredicatePushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{}", result),
+            "Join: [type: INNER, on: [(Column(Column { name: \"c1\" }), Column(Column { name: \"c1\" }))]]\n\tFilter: [c2 = 5]\n\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_predicate_push_down_left_join() {
+        let lhs = create_scan();
         let rhs = create_scan();
 
         let input = Arc::new(LogicalPlan::Join(Join::new(
@@ -611,11 +632,12 @@ mod tests {
         let predicate = col("c2").eq(lit(5i64));
         let input = create_filter(input, predicate);
 
-        println!("{input}");
-
         let rule = PredicatePushDownRule::new();
         let result = rule.try_optimize(&input).unwrap().unwrap();
-        println!("{result}");
+        assert_eq!(
+            format!("{}", result),
+            "Join: [type: LEFT, on: [(Column(Column { name: \"c1\" }), Column(Column { name: \"c1\" }))]]\n\tFilter: [c2 = 5]\n\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        );
     }
 
     #[test]
