@@ -287,7 +287,7 @@ impl PredicatePushDownRule {
                 lhs_to_push.push(predicate);
             } else if rhs_preserved && Self::can_pushdown_predicate(&predicate, &rhs_schema) {
                 rhs_to_push.push(predicate);
-            } else if is_inner_join && Self::can_evaluate_as_join_condition(&predicate)? {
+            } else if is_inner_join {
                 join_conditions.push(predicate);
             } else {
                 keep_predicates.push(predicate);
@@ -387,12 +387,70 @@ impl PredicatePushDownRule {
             == columns.len()
     }
 
-    fn can_evaluate_as_join_condition(predicate: &Expression) -> Result<bool> {
-        todo!()
+    fn extract_join_or_clauses(predicates: &[Expression], schema: &Schema) -> Vec<Expression> {
+        let schema_columns = schema
+            .fields()
+            .iter()
+            .map(|f| Column::new(f.name()))
+            .collect::<HashSet<_>>();
+        predicates
+            .iter()
+            .filter_map(move |expr| {
+                if let Expression::Binary(e) = expr {
+                    if e.op() != &Operator::Or {
+                        return None;
+                    }
+                    let lhs = Self::extract_or_clause(e.lhs(), &schema_columns);
+                    let rhs = Self::extract_or_clause(e.rhs(), &schema_columns);
+                    if let (Some(left), Some(right)) = (lhs, rhs) {
+                        return Some(left.or(right));
+                    }
+                }
+                None
+            })
+            .collect()
     }
 
-    fn extract_join_or_clauses(predicates: &[Expression], schema: &Schema) -> Vec<Expression> {
-        todo!()
+    fn extract_or_clause(
+        expression: &Expression,
+        schema_columns: &HashSet<Column>,
+    ) -> Option<Expression> {
+        let mut predicate = None;
+
+        match expression {
+            Expression::Binary(e) if e.op() == &Operator::Or => {
+                let lhs = Self::extract_or_clause(e.lhs(), schema_columns);
+                let rhs = Self::extract_or_clause(e.rhs(), schema_columns);
+                if let (Some(left), Some(right)) = (lhs, rhs) {
+                    predicate = Some(left.or(right))
+                }
+            }
+            Expression::Binary(e) if e.op() == &Operator::And => {
+                let lhs = Self::extract_or_clause(e.lhs(), schema_columns);
+                let rhs = Self::extract_or_clause(e.rhs(), schema_columns);
+
+                match (lhs, rhs) {
+                    (Some(left), Some(right)) => predicate = Some(left.and(right)),
+                    (Some(left), None) => predicate = Some(left),
+                    (None, Some(right)) => predicate = Some(right),
+                    (None, None) => predicate = None,
+                }
+            }
+            _ => {
+                let mut columns = HashSet::new();
+                Self::collect_columns(expression, &mut columns);
+                if schema_columns
+                    .intersection(&columns)
+                    .collect::<HashSet<_>>()
+                    .len()
+                    == columns.len()
+                {
+                    predicate = Some(expression.clone())
+                }
+            }
+        }
+
+        predicate
     }
 
     /// Recursively collect all referenced columns from the expression.
