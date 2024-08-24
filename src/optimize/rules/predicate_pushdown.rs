@@ -70,6 +70,18 @@ impl PredicatePushDownRule {
                 )?);
                 Some(new_plan)
             }
+            LogicalPlan::Join(join) => {
+                let lhs = Self::push_down(join.lhs())?.unwrap_or(join.lhs().clone());
+                let rhs = Self::push_down(join.rhs())?.unwrap_or(join.rhs().clone());
+                let new_plan = LogicalPlan::Join(Join::new(
+                    Arc::new(lhs),
+                    Arc::new(rhs),
+                    join.on().to_vec(),
+                    join.join_type(),
+                    join.filter().cloned(),
+                ));
+                Some(new_plan)
+            }
             _ => None,
         };
 
@@ -248,6 +260,9 @@ impl PredicatePushDownRule {
                     None => RecursionState::Continue(new_plan),
                 }
             }
+            LogicalPlan::Join(join) => {
+                Self::push_down_join(join.clone(), Some(&filter.expressions()[0]))?
+            }
             _ => RecursionState::Stop(None),
         };
 
@@ -267,7 +282,7 @@ impl PredicatePushDownRule {
             .map(|expr| (*expr).clone())
             .collect::<Vec<_>>();
         let inferred_join_predicates =
-            Self::infer_join_predicates(&join, &predicates, &on_predicates)?;
+            Self::infer_join_predicates(&join, &predicates, &on_predicates);
 
         if predicates.is_empty() && on_predicates.is_empty() && inferred_join_predicates.is_empty()
         {
@@ -335,7 +350,7 @@ impl PredicatePushDownRule {
             Some(predicate) => {
                 LogicalPlan::Filter(Filter::try_new(Arc::new(join.rhs().clone()), predicate)?)
             }
-            None => join.lhs().clone(),
+            None => join.rhs().clone(),
         };
 
         let new_join_plan = LogicalPlan::Join(Join::new(
@@ -360,8 +375,47 @@ impl PredicatePushDownRule {
         join: &Join,
         predicates: &[Expression],
         on_predicates: &[Expression],
-    ) -> Result<Vec<Expression>> {
-        todo!()
+    ) -> Vec<Expression> {
+        if join.join_type() != JoinType::Inner {
+            return vec![];
+        }
+
+        let join_on_columns = join
+            .on()
+            .iter()
+            .flat_map(|(lhs, rhs)| {
+                let mut left = HashSet::new();
+                let mut right = HashSet::new();
+                Self::collect_columns(lhs, &mut left);
+                Self::collect_columns(rhs, &mut right);
+                Some(left.into_iter().zip(right).collect::<Vec<_>>())
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+
+        let predicate_columns = predicates
+            .iter()
+            .chain(on_predicates)
+            .flat_map(|expr| {
+                let mut columns = HashSet::new();
+                Self::collect_columns(expr, &mut columns);
+                columns.into_iter().collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        let mut result: Vec<Expression> = Vec::new();
+        for pred_col in &predicate_columns {
+            for (left, right) in &join_on_columns {
+                if pred_col == left {
+                    result.push(Expression::Column(right.clone()));
+                    break;
+                } else if pred_col == right {
+                    result.push(Expression::Column(left.clone()));
+                    break;
+                }
+            }
+        }
+        result
     }
 
     fn preserved_join_side(join_type: JoinType, is_on: bool) -> (bool, bool) {
@@ -387,28 +441,28 @@ impl PredicatePushDownRule {
             == columns.len()
     }
 
-    fn extract_join_or_clauses(predicates: &[Expression], schema: &Schema) -> Vec<Expression> {
+    fn extract_join_or_clauses<'a>(
+        predicates: &'a [Expression],
+        schema: &'a Schema,
+    ) -> impl Iterator<Item = Expression> + 'a {
         let schema_columns = schema
             .fields()
             .iter()
             .map(|f| Column::new(f.name()))
             .collect::<HashSet<_>>();
-        predicates
-            .iter()
-            .filter_map(move |expr| {
-                if let Expression::Binary(e) = expr {
-                    if e.op() != &Operator::Or {
-                        return None;
-                    }
-                    let lhs = Self::extract_or_clause(e.lhs(), &schema_columns);
-                    let rhs = Self::extract_or_clause(e.rhs(), &schema_columns);
-                    if let (Some(left), Some(right)) = (lhs, rhs) {
-                        return Some(left.or(right));
-                    }
+        predicates.iter().filter_map(move |expr| {
+            if let Expression::Binary(e) = expr {
+                if e.op() != &Operator::Or {
+                    return None;
                 }
-                None
-            })
-            .collect()
+                let lhs = Self::extract_or_clause(e.lhs(), &schema_columns);
+                let rhs = Self::extract_or_clause(e.rhs(), &schema_columns);
+                if let (Some(left), Some(right)) = (lhs, rhs) {
+                    return Some(left.or(right));
+                }
+            }
+            None
+        })
     }
 
     fn extract_or_clause(
@@ -518,8 +572,13 @@ mod tests {
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::{predicate_pushdown::PredicatePushDownRule, OptimizerRule},
         plan::logical::{
-            aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection,
-            scan::Scan, sort::Sort,
+            aggregate::Aggregate,
+            filter::Filter,
+            join::{Join, JoinType},
+            plan::LogicalPlan,
+            projection::Projection,
+            scan::Scan,
+            sort::Sort,
         },
     };
 
@@ -533,6 +592,30 @@ mod tests {
         Arc::new(LogicalPlan::Filter(
             Filter::try_new(input, predicate).unwrap(),
         ))
+    }
+
+    #[test]
+    fn test_predicate_push_down_join() {
+        let lhs = create_scan();
+        let predicate = col("c2").eq(lit(4i64));
+        let lhs = create_filter(lhs, predicate);
+        let rhs = create_scan();
+
+        let input = Arc::new(LogicalPlan::Join(Join::new(
+            lhs,
+            rhs,
+            vec![(col("c1"), col("c1"))],
+            JoinType::Left,
+            None,
+        )));
+        let predicate = col("c2").eq(lit(5i64));
+        let input = create_filter(input, predicate);
+
+        println!("{input}");
+
+        let rule = PredicatePushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        println!("{result}");
     }
 
     #[test]
