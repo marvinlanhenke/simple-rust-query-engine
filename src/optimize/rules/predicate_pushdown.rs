@@ -27,19 +27,31 @@ use crate::{
 
 use super::OptimizerRule;
 
+/// Represents the state of the recursion during predicate pushdown.
 enum RecursionState {
+    /// Indicates that the recursion should continue with a given `LogicalPlan`.
     Continue(LogicalPlan),
+    /// Indicates that the recursion should stop, returning an optional `LogicalPlan`.
     Stop(Option<LogicalPlan>),
 }
 
+/// An optimization rule that performs predicate pushdown.
+///
+/// This rule attempts to move filter predicates closer to the data source (e.g., a scan operation),
+/// which can reduce the amount of data processed by subsequent operations in the query plan.
 #[derive(Debug, Default)]
 pub struct PredicatePushDownRule;
 
 impl PredicatePushDownRule {
+    /// Creates a new instance of `PredicatePushDownRule`.
     pub fn new() -> Self {
         Self {}
     }
 
+    /// Recursively pushes down predicates in the logical plan.
+    ///
+    /// This method processes the given `LogicalPlan`, attempting to push down any filter
+    /// predicates as close to the data source as possible.
     fn push_down(plan: &LogicalPlan) -> Result<Option<LogicalPlan>> {
         let new_plan = match plan {
             LogicalPlan::Filter(filter) => match Self::push_down_impl(filter)? {
@@ -88,6 +100,10 @@ impl PredicatePushDownRule {
         Ok(new_plan)
     }
 
+    /// Pushes down predicates specifically for a `Filter` logical plan.
+    ///
+    /// This method attempts to push down the filter in different contexts, such as when the
+    /// filter is applied to a scan, projection, or aggregate operation.
     fn push_down_impl(filter: &Filter) -> Result<RecursionState> {
         let child_plan = filter.input();
 
@@ -269,6 +285,10 @@ impl PredicatePushDownRule {
         Ok(new_plan)
     }
 
+    /// Attempts to push down predicates through a `Join` operation.
+    ///
+    /// This method identifies predicates that can be pushed down to the left or right side
+    /// of the join, or kept as part of the join condition.
     fn push_down_join(join: Join, parent_predicate: Option<&Expression>) -> Result<RecursionState> {
         let predicates = parent_predicate
             .map_or_else(Vec::new, |expr| Self::split_conjunction(expr, vec![]))
@@ -360,6 +380,7 @@ impl PredicatePushDownRule {
         }
     }
 
+    /// Determines which sides of a join are preserved based on the join type.
     fn preserved_join_side(join_type: JoinType, is_on: bool) -> (bool, bool) {
         match join_type {
             JoinType::Inner => (true, true),
@@ -367,6 +388,7 @@ impl PredicatePushDownRule {
         }
     }
 
+    /// Determines if a predicate can be pushed down to a specific schema.
     fn can_pushdown_predicate(predicate: &Expression, schema: &Schema) -> bool {
         let schema_columns = schema
             .fields()
@@ -383,6 +405,7 @@ impl PredicatePushDownRule {
             == columns.len()
     }
 
+    /// Extracts "OR" clauses from join predicates that can be pushed down.
     fn extract_join_or_clauses<'a>(
         predicates: &'a [Expression],
         schema: &'a Schema,
@@ -407,6 +430,7 @@ impl PredicatePushDownRule {
         })
     }
 
+    /// Extracts a specific "OR" clause from an expression.
     fn extract_or_clause(
         expression: &Expression,
         schema_columns: &HashSet<Column>,
