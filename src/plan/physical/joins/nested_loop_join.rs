@@ -28,8 +28,10 @@ use crate::{
 
 use super::utils::{apply_join_filter, JoinColumnIndex, JoinFilter};
 
+/// Type alias for a future that resolves to `InnerTableData`.
 type InnerTableFuture = BoxFuture<'static, Result<InnerTableData>>;
 
+/// Represents the data for the inner table in a nested loop join.
 #[derive(Debug)]
 struct InnerTableData {
     /// The inner table's `RecordBatch`.
@@ -39,17 +41,23 @@ struct InnerTableData {
 }
 
 impl InnerTableData {
+    /// Creates a new `InnerTableData` instance.
     fn new(batch: RecordBatch, visited: BooleanBufferBuilder) -> Self {
         Self { batch, visited }
     }
 }
 
+/// Represents the state of the inner table in a nested loop join.
+///
+/// This can either be an `Initial` state where the inner table is being
+/// loaded asynchronously, or a `Ready` state where the table has been fully loaded.
 enum InnerTableState {
     Initial(InnerTableFuture),
     Ready(InnerTableData),
 }
 
 impl InnerTableState {
+    /// Tries to access the inner table future, expecting the state to be `Initial`.
     fn try_as_init_mut(&mut self) -> Result<&mut InnerTableFuture> {
         match self {
             InnerTableState::Initial(fut) => Ok(fut),
@@ -60,6 +68,7 @@ impl InnerTableState {
         }
     }
 
+    /// Tries to access the inner table data, expecting the state to be `Ready`.
     fn try_as_ready_mut(&mut self) -> Result<&mut InnerTableData> {
         match self {
             InnerTableState::Ready(data) => Ok(data),
@@ -71,6 +80,11 @@ impl InnerTableState {
     }
 }
 
+/// Represents the execution plan for a nested loop join operation.
+///
+/// This plan executes a join between two tables by iterating over the rows of
+/// both tables in a nested loop fashion, applying optional join filters and handling
+/// different join types.
 #[derive(Debug)]
 pub struct NestedLoopJoinExec {
     /// The left side `ExecutionPlan` of the join operation.
@@ -88,6 +102,7 @@ pub struct NestedLoopJoinExec {
 }
 
 impl NestedLoopJoinExec {
+    /// Attempts to create a new `NestedLoopJoinExec` instance.
     pub fn try_new(
         lhs: Arc<dyn ExecutionPlan>,
         rhs: Arc<dyn ExecutionPlan>,
@@ -110,6 +125,10 @@ impl NestedLoopJoinExec {
         })
     }
 
+    /// Asynchronously collects the input data from the left side (inner table) of the join.
+    ///
+    /// This function retrieves all the rows from the left side, concatenates them into a
+    /// single `RecordBatch`, and initializes a bitmap builder to track visited rows.
     async fn collect_build_input(lhs: Arc<dyn ExecutionPlan>) -> Result<InnerTableData> {
         let schema = lhs.schema();
         let stream = lhs.execute()?;
@@ -176,11 +195,20 @@ impl Display for NestedLoopJoinExec {
     }
 }
 
+/// Represents the possible states of a stream result in the join process.
+///
+/// This enum is used internally to control the flow of the join execution, indicating
+/// whether the stream has produced a result that is ready to be processed, or if the
+/// operation should continue.
 enum StreamResultState<T> {
     Ready(T),
     Continue,
 }
 
+/// Macro to handle the result of a stream operation.
+///
+/// This macro simplifies the process of checking the result of a stream operation
+/// and deciding whether to continue processing or return a completed `Poll`.
 macro_rules! handle_stream_result {
     ($e: expr) => {
         match $e {
@@ -191,15 +219,25 @@ macro_rules! handle_stream_result {
     };
 }
 
+/// Represents the different states of the `NestedLoopJoinStream`.
+///
+/// This state machine is used to manage the join process, progressing through the
+/// various stages of the join as data is processed
 enum NestedLoopJoinStreamState {
+    /// Waiting for the build side (inner table) to be loaded.
     WaitBuildSide,
+    /// Fetching the next probe batch from the outer table.
     FetchProbeBatch,
+    /// Processing the current probe batch with the build side.
     ProcessProbeBatch(RecordBatch),
+    /// The probe side has been exhausted, processing unmatched rows from the build side.
     ExhaustedProbeSide,
+    /// The join operation has completed.
     Completed,
 }
 
 impl NestedLoopJoinStreamState {
+    /// Attempts to retrieve the `RecordBatch` from the `ProcessProbeBatch` state.
     fn try_as_process_probe_batch(&self) -> Result<&RecordBatch> {
         match self {
             NestedLoopJoinStreamState::ProcessProbeBatch(batch) => Ok(batch),
@@ -211,18 +249,34 @@ impl NestedLoopJoinStreamState {
     }
 }
 
+/// Represents the stream that performs the nested loop join operation.
+///
+/// This stream processes batches from both the inner and outer tables, applying the
+/// specified join logic and producing joined `RecordBatch`es.
 struct NestedLoopJoinStream {
+    /// The output schema of the join operation.
     schema: SchemaRef,
+    /// An optional filter applied to the join operation.
     filter: Option<JoinFilter>,
+    /// The type of join being performed (e.g., `Inner`, `Left`).
     join_type: JoinType,
+    /// The state of the inner table in the join process.
     inner_table: InnerTableState,
+    /// The stream of batches from the outer table.
     outer_table: RecordBatchStream,
+    /// The schema of the outer table.
     outer_table_schema: SchemaRef,
+    /// The indices of columns involved in the join.
     column_indices: Vec<JoinColumnIndex>,
+    /// The current state of the stream.
     state: NestedLoopJoinStreamState,
 }
 
 impl NestedLoopJoinStream {
+    /// Polls the next inner operation in the nested loop join.
+    ///
+    /// This method drives the state machine forward, handling each state
+    /// and producing the next `RecordBatch` as a result.
     fn poll_next_inner(
         &mut self,
         cx: &mut std::task::Context<'_>,
@@ -248,6 +302,10 @@ impl NestedLoopJoinStream {
         }
     }
 
+    /// Collects the inner table (build side) asynchronously.
+    ///
+    /// This method waits for the inner table to be fully loaded before proceeding
+    /// to the next state of the join operation.
     fn collect_build_side(
         &mut self,
         cx: &mut std::task::Context<'_>,
@@ -263,6 +321,9 @@ impl NestedLoopJoinStream {
         Poll::Ready(Ok(StreamResultState::Continue))
     }
 
+    /// Fetches the next probe batch from the outer table.
+    ///
+    /// This method advances the state to processing the probe batch once it is ready.
     fn fetch_probe_batch(
         &mut self,
         cx: &mut std::task::Context<'_>,
@@ -275,6 +336,10 @@ impl NestedLoopJoinStream {
         Poll::Ready(Ok(StreamResultState::Continue))
     }
 
+    /// Processes the current probe batch against the build batch.
+    ///
+    /// This method performs the nested loop join logic for the current batch, applying
+    /// any filters and producing the resulting joined `RecordBatch`.
     fn process_probe_batch(&mut self) -> Result<StreamResultState<Option<RecordBatch>>> {
         let inner_table = self.inner_table.try_as_ready_mut()?;
         let build_batch = &inner_table.batch;
@@ -296,6 +361,10 @@ impl NestedLoopJoinStream {
         Ok(StreamResultState::Ready(Some(result)))
     }
 
+    /// Joins a build batch and a probe batch.
+    ///
+    /// This function applies the join logic between a batch from the build side and
+    /// a batch from the probe side, considering the join type and any filters.
     fn join_build_probe_batch(
         build_batch: &RecordBatch,
         probe_batch: &RecordBatch,
@@ -353,6 +422,10 @@ impl NestedLoopJoinStream {
         )
     }
 
+    /// Processes unmatched rows from the build batch for a left join.
+    ///
+    /// This method handles the case where the probe side is exhausted, and there are
+    /// still unmatched rows on the build side that need to be included in the join result.
     fn process_unmatched_build_batch(&mut self) -> Result<StreamResultState<Option<RecordBatch>>> {
         if !matches!(self.join_type, JoinType::Left) {
             self.state = NestedLoopJoinStreamState::Completed;
