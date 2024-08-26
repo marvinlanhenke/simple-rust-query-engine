@@ -25,7 +25,7 @@ use crate::{
     },
 };
 
-use super::{OptimizerRule, RecursionState};
+use super::{utils::collect_columns, OptimizerRule, RecursionState};
 
 /// An optimization rule that performs predicate pushdown.
 ///
@@ -220,7 +220,7 @@ impl PredicatePushDownRule {
                 let mut to_keep = vec![];
                 for expr in predicates {
                     let mut columns = HashSet::new();
-                    Self::collect_columns(&expr, &mut columns);
+                    collect_columns(&expr, &mut columns);
                     if columns.iter().all(|col| group_by_cols.contains(col)) {
                         to_push.push(expr)
                     } else {
@@ -388,7 +388,7 @@ impl PredicatePushDownRule {
             .map(|f| Column::new(f.name()))
             .collect::<HashSet<_>>();
         let mut columns = HashSet::new();
-        Self::collect_columns(predicate, &mut columns);
+        collect_columns(predicate, &mut columns);
 
         schema_columns
             .intersection(&columns)
@@ -450,7 +450,7 @@ impl PredicatePushDownRule {
             }
             _ => {
                 let mut columns = HashSet::new();
-                Self::collect_columns(expression, &mut columns);
+                collect_columns(expression, &mut columns);
                 if schema_columns
                     .intersection(&columns)
                     .collect::<HashSet<_>>()
@@ -463,22 +463,6 @@ impl PredicatePushDownRule {
         }
 
         predicate
-    }
-
-    /// Recursively collect all referenced columns from the expression.
-    fn collect_columns(expr: &Expression, columns: &mut HashSet<Column>) {
-        use Expression::*;
-
-        match expr {
-            Column(e) => {
-                columns.insert(e.clone());
-            }
-            Binary(e) => {
-                Self::collect_columns(e.lhs(), columns);
-                Self::collect_columns(e.rhs(), columns);
-            }
-            _ => {}
-        }
     }
 
     /// Splits a conjunction expression into its separate parts.
