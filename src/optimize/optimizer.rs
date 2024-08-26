@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use crate::{error::Result, plan::logical::plan::LogicalPlan};
 
-use super::rules::{predicate_pushdown::PredicatePushDownRule, OptimizerRule};
+use super::rules::{
+    predicate_pushdown::PredicatePushDownRule, projection_pushdown::ProjectionPushDownRule,
+    OptimizerRule,
+};
 
 /// Represents the query optimizer, which applies a series of optimization rules
 /// to a logical plan in order to improve its performance or execution efficiency.
@@ -21,7 +24,10 @@ impl Default for Optimizer {
 impl Optimizer {
     /// Creates a new `Optimizer` instance with a default set of optimization rules.
     pub fn new() -> Self {
-        let rules: Vec<Arc<dyn OptimizerRule>> = vec![Arc::new(PredicatePushDownRule::new())];
+        let rules: Vec<Arc<dyn OptimizerRule>> = vec![
+            Arc::new(PredicatePushDownRule::new()),
+            Arc::new(ProjectionPushDownRule::new()),
+        ];
 
         Self::with_rules(rules)
     }
