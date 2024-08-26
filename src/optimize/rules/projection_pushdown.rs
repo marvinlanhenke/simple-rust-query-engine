@@ -4,7 +4,7 @@ use crate::{
     error::Result,
     expression::logical::{column::Column, expr::Expression},
     plan::logical::{
-        aggregate::Aggregate, filter::Filter, limit::Limit, plan::LogicalPlan,
+        aggregate::Aggregate, filter::Filter, join::Join, limit::Limit, plan::LogicalPlan,
         projection::Projection, scan::Scan, sort::Sort,
     },
 };
@@ -65,6 +65,27 @@ impl ProjectionPushDownRule {
                     agg.group_by().to_vec(),
                     agg.aggregate_expressions().to_vec(),
                 )?);
+                Some(new_plan)
+            }
+            LogicalPlan::Join(join) => {
+                if let Some(join_filter) = join.filter() {
+                    Self::collect_columns_by_name(&[join_filter.clone()], projected_columns);
+                }
+                for (lhs_on, rhs_on) in join.on() {
+                    Self::collect_columns_by_name(&[lhs_on.clone()], projected_columns);
+                    Self::collect_columns_by_name(&[rhs_on.clone()], projected_columns);
+                }
+                let lhs_input =
+                    Self::push_down(join.lhs(), projected_columns)?.unwrap_or(join.lhs().clone());
+                let rhs_input =
+                    Self::push_down(join.rhs(), projected_columns)?.unwrap_or(join.rhs().clone());
+                let new_plan = LogicalPlan::Join(Join::new(
+                    Arc::new(lhs_input),
+                    Arc::new(rhs_input),
+                    join.on().to_vec(),
+                    join.join_type(),
+                    join.filter().cloned(),
+                ));
                 Some(new_plan)
             }
             _ => None,
@@ -171,8 +192,31 @@ impl ProjectionPushDownRule {
                 )?);
                 RecursionState::Continue(new_plan)
             }
-
-            _ => RecursionState::Stop(None),
+            LogicalPlan::Join(join) => {
+                if let Some(join_filter) = join.filter() {
+                    Self::collect_columns_by_name(&[join_filter.clone()], columns);
+                }
+                for (lhs_on, rhs_on) in join.on() {
+                    Self::collect_columns_by_name(&[lhs_on.clone()], columns);
+                    Self::collect_columns_by_name(&[rhs_on.clone()], columns);
+                }
+                let lhs_new_projection = LogicalPlan::Projection(Projection::new(
+                    Arc::new(join.lhs().clone()),
+                    projection.expressions().to_vec(),
+                ));
+                let rhs_new_projection = LogicalPlan::Projection(Projection::new(
+                    Arc::new(join.rhs().clone()),
+                    projection.expressions().to_vec(),
+                ));
+                let new_plan = LogicalPlan::Join(Join::new(
+                    Arc::new(lhs_new_projection),
+                    Arc::new(rhs_new_projection),
+                    join.on().to_vec(),
+                    join.join_type(),
+                    join.filter().cloned(),
+                ));
+                RecursionState::Continue(new_plan)
+            }
         };
 
         Ok(new_plan)
@@ -214,8 +258,14 @@ mod tests {
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::{projection_pushdown::ProjectionPushDownRule, OptimizerRule},
         plan::logical::{
-            aggregate::Aggregate, filter::Filter, limit::Limit, plan::LogicalPlan,
-            projection::Projection, scan::Scan, sort::Sort,
+            aggregate::Aggregate,
+            filter::Filter,
+            join::{Join, JoinType},
+            limit::Limit,
+            plan::LogicalPlan,
+            projection::Projection,
+            scan::Scan,
+            sort::Sort,
         },
     };
 
@@ -227,6 +277,28 @@ mod tests {
 
     fn create_projection(input: Arc<LogicalPlan>, projection: Vec<Expression>) -> Arc<LogicalPlan> {
         Arc::new(LogicalPlan::Projection(Projection::new(input, projection)))
+    }
+
+    #[test]
+    fn test_projection_pushdown_with_join() {
+        let lhs = create_scan();
+        let rhs = create_scan();
+        let input = Arc::new(LogicalPlan::Join(Join::new(
+            lhs,
+            rhs,
+            vec![(col("c1"), col("c1"))],
+            JoinType::Left,
+            None,
+        )));
+
+        let input = create_projection(input, vec![col("c2")]);
+
+        let rule = ProjectionPushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{result}"),
+            "Join: [type: LEFT, on: [(Column(Column { name: \"c1\" }), Column(Column { name: \"c1\" }))]]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n"
+        );
     }
 
     #[test]
