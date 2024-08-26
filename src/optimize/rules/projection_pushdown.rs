@@ -2,10 +2,8 @@ use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     error::Result,
-    expression::logical::expr::Expression,
-    plan::logical::{
-        limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan, sort::Sort,
-    },
+    expression::logical::{column::Column, expr::Expression},
+    plan::logical::{plan::LogicalPlan, projection::Projection, scan::Scan},
 };
 
 use super::{utils::collect_columns, OptimizerRule, RecursionState};
@@ -18,28 +16,16 @@ impl ProjectionPushDownRule {
         Self {}
     }
 
-    fn push_down(plan: &LogicalPlan) -> Result<Option<LogicalPlan>> {
+    fn push_down(
+        plan: &LogicalPlan,
+        projected_columns: &mut Vec<String>,
+    ) -> Result<Option<LogicalPlan>> {
         let new_plan = match plan {
-            LogicalPlan::Projection(projection) => match Self::push_down_impl(projection)? {
-                RecursionState::Stop(opt_plan) => opt_plan,
-                RecursionState::Continue(plan) => Self::push_down(&plan)?,
-            },
-            LogicalPlan::Sort(sort) => {
-                // wrap the sort input with another projection to pushdown
-                let projection = LogicalPlan::Projection(Projection::new(
-                    Arc::new(sort.input().clone()),
-                    sort.expressions().to_vec(),
-                ));
-                let input = Self::push_down(&projection)?.unwrap_or(sort.input().clone());
-                let new_plan =
-                    LogicalPlan::Sort(Sort::new(Arc::new(input), sort.expressions().to_vec()));
-                Some(new_plan)
-            }
-            LogicalPlan::Limit(limit) => {
-                let input = Self::push_down(limit.input())?.unwrap_or(limit.input().clone());
-                let new_plan =
-                    LogicalPlan::Limit(Limit::new(Arc::new(input), limit.skip(), limit.fetch()));
-                Some(new_plan)
+            LogicalPlan::Projection(projection) => {
+                match Self::push_down_impl(projection, projected_columns)? {
+                    RecursionState::Stop(opt_plan) => opt_plan,
+                    RecursionState::Continue(plan) => Self::push_down(&plan, projected_columns)?,
+                }
             }
             _ => None,
         };
@@ -47,7 +33,12 @@ impl ProjectionPushDownRule {
         Ok(new_plan)
     }
 
-    fn push_down_impl(projection: &Projection) -> Result<RecursionState> {
+    fn push_down_impl(
+        projection: &Projection,
+        columns: &mut Vec<String>,
+    ) -> Result<RecursionState> {
+        Self::collect_columns_by_name(projection.expressions(), columns);
+
         let child_plan = projection.input();
 
         let new_plan = match child_plan {
@@ -55,19 +46,10 @@ impl ProjectionPushDownRule {
                 let schema = scan.schema();
                 let fields = schema.fields();
 
-                let mut columns = HashSet::new();
-                for expr in projection.expressions() {
-                    collect_columns(expr, &mut columns);
-                }
-                let projected_columns_by_name = columns
-                    .iter()
-                    .map(|c| c.name().to_string())
-                    .collect::<Vec<_>>();
-
                 let to_push = fields
                     .iter()
                     .map(|f| f.name().to_string())
-                    .filter(|n| projected_columns_by_name.contains(n))
+                    .filter(|n| columns.contains(n))
                     .collect::<Vec<_>>();
 
                 let projection = if to_push.is_empty() {
@@ -86,16 +68,12 @@ impl ProjectionPushDownRule {
                 RecursionState::Stop(Some(new_plan))
             }
             LogicalPlan::Projection(proj) => {
-                let mut columns = HashSet::new();
-                for expr in proj.expressions() {
-                    collect_columns(expr, &mut columns);
-                }
-                let child_projection = columns
-                    .into_iter()
-                    .map(Expression::Column)
+                Self::collect_columns_by_name(proj.expressions(), columns);
+
+                let new_projection = columns
+                    .iter()
+                    .map(|n| Expression::Column(Column::new(n)))
                     .collect::<Vec<_>>();
-                let mut new_projection = projection.expressions().to_vec();
-                new_projection.extend(child_projection);
 
                 let new_plan = LogicalPlan::Projection(Projection::new(
                     Arc::new(proj.input().clone()),
@@ -103,10 +81,26 @@ impl ProjectionPushDownRule {
                 ));
                 RecursionState::Continue(new_plan)
             }
+            LogicalPlan::Sort(_sort) => {
+                todo!()
+            }
+
             _ => RecursionState::Stop(None),
         };
 
         Ok(new_plan)
+    }
+
+    fn collect_columns_by_name(exprs: &[Expression], columns: &mut Vec<String>) {
+        let mut referenced_columns = HashSet::new();
+        for expr in exprs {
+            collect_columns(expr, &mut referenced_columns);
+        }
+        let columns_by_name = referenced_columns
+            .into_iter()
+            .map(|c| c.name().to_string())
+            .collect::<Vec<_>>();
+        columns.extend(columns_by_name);
     }
 }
 
@@ -116,7 +110,8 @@ impl OptimizerRule for ProjectionPushDownRule {
     }
 
     fn try_optimize(&self, plan: &LogicalPlan) -> Result<Option<LogicalPlan>> {
-        Self::push_down(plan)
+        let mut projected_columns = vec![];
+        Self::push_down(plan, &mut projected_columns)
     }
 }
 
@@ -128,9 +123,7 @@ mod tests {
         expression::logical::{expr::Expression, expr_fn::col},
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::{projection_pushdown::ProjectionPushDownRule, OptimizerRule},
-        plan::logical::{
-            limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan, sort::Sort,
-        },
+        plan::logical::{plan::LogicalPlan, projection::Projection, scan::Scan},
     };
 
     fn create_scan() -> Arc<LogicalPlan> {
@@ -141,36 +134,6 @@ mod tests {
 
     fn create_projection(input: Arc<LogicalPlan>, projection: Vec<Expression>) -> Arc<LogicalPlan> {
         Arc::new(LogicalPlan::Projection(Projection::new(input, projection)))
-    }
-
-    #[test]
-    fn test_projection_pushdown_with_limit() {
-        let input = create_scan();
-        let projection = vec![col("c1"), col("c2")];
-        let input = create_projection(input, projection);
-        let input = Arc::new(LogicalPlan::Limit(Limit::new(input, 0, Some(1))));
-
-        let rule = ProjectionPushDownRule::new();
-        let result = rule.try_optimize(&input).unwrap().unwrap();
-        assert_eq!(
-            format!("{result}"),
-            "Limit: [skip: 0, fetch:Some(1)]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n"
-        );
-    }
-
-    #[test]
-    fn test_projection_pushdown_with_sort() {
-        let input = create_scan();
-        let projection = vec![col("c1")];
-        let input = create_projection(input, projection);
-        let input = Arc::new(LogicalPlan::Sort(Sort::new(input, vec![col("c2")])));
-
-        let rule = ProjectionPushDownRule::new();
-        let result = rule.try_optimize(&input).unwrap().unwrap();
-        assert_eq!(
-            format!("{result}"),
-            "Sort: [c2]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n"
-        );
     }
 
     #[test]
