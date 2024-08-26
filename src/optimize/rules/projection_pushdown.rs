@@ -3,7 +3,9 @@ use std::{collections::HashSet, sync::Arc};
 use crate::{
     error::Result,
     expression::logical::expr::Expression,
-    plan::logical::{plan::LogicalPlan, projection::Projection, scan::Scan},
+    plan::logical::{
+        limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan, sort::Sort,
+    },
 };
 
 use super::{utils::collect_columns, OptimizerRule, RecursionState};
@@ -22,6 +24,23 @@ impl ProjectionPushDownRule {
                 RecursionState::Stop(opt_plan) => opt_plan,
                 RecursionState::Continue(plan) => Self::push_down(&plan)?,
             },
+            LogicalPlan::Sort(sort) => {
+                // wrap the sort input with another projection to pushdown
+                let projection = LogicalPlan::Projection(Projection::new(
+                    Arc::new(sort.input().clone()),
+                    sort.expressions().to_vec(),
+                ));
+                let input = Self::push_down(&projection)?.unwrap_or(sort.input().clone());
+                let new_plan =
+                    LogicalPlan::Sort(Sort::new(Arc::new(input), sort.expressions().to_vec()));
+                Some(new_plan)
+            }
+            LogicalPlan::Limit(limit) => {
+                let input = Self::push_down(limit.input())?.unwrap_or(limit.input().clone());
+                let new_plan =
+                    LogicalPlan::Limit(Limit::new(Arc::new(input), limit.skip(), limit.fetch()));
+                Some(new_plan)
+            }
             _ => None,
         };
 
@@ -109,7 +128,9 @@ mod tests {
         expression::logical::{expr::Expression, expr_fn::col},
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::{projection_pushdown::ProjectionPushDownRule, OptimizerRule},
-        plan::logical::{plan::LogicalPlan, projection::Projection, scan::Scan},
+        plan::logical::{
+            limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan, sort::Sort,
+        },
     };
 
     fn create_scan() -> Arc<LogicalPlan> {
@@ -120,6 +141,36 @@ mod tests {
 
     fn create_projection(input: Arc<LogicalPlan>, projection: Vec<Expression>) -> Arc<LogicalPlan> {
         Arc::new(LogicalPlan::Projection(Projection::new(input, projection)))
+    }
+
+    #[test]
+    fn test_projection_pushdown_with_limit() {
+        let input = create_scan();
+        let projection = vec![col("c1"), col("c2")];
+        let input = create_projection(input, projection);
+        let input = Arc::new(LogicalPlan::Limit(Limit::new(input, 0, Some(1))));
+
+        let rule = ProjectionPushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{result}"),
+            "Limit: [skip: 0, fetch:Some(1)]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_projection_pushdown_with_sort() {
+        let input = create_scan();
+        let projection = vec![col("c1")];
+        let input = create_projection(input, projection);
+        let input = Arc::new(LogicalPlan::Sort(Sort::new(input, vec![col("c2")])));
+
+        let rule = ProjectionPushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{result}"),
+            "Sort: [c2]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n"
+        );
     }
 
     #[test]
