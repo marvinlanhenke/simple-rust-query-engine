@@ -4,7 +4,8 @@ use crate::{
     error::Result,
     expression::logical::{column::Column, expr::Expression},
     plan::logical::{
-        limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan, sort::Sort,
+        filter::Filter, limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan,
+        sort::Sort,
     },
 };
 
@@ -30,6 +31,7 @@ impl ProjectionPushDownRule {
                 }
             }
             LogicalPlan::Sort(sort) => {
+                Self::collect_columns_by_name(sort.expressions(), projected_columns);
                 let input = Self::push_down(sort.input(), projected_columns)?
                     .unwrap_or(sort.input().clone());
                 let new_plan =
@@ -41,6 +43,16 @@ impl ProjectionPushDownRule {
                     .unwrap_or(limit.input().clone());
                 let new_plan =
                     LogicalPlan::Limit(Limit::new(Arc::new(input), limit.skip(), limit.fetch()));
+                Some(new_plan)
+            }
+            LogicalPlan::Filter(filter) => {
+                Self::collect_columns_by_name(filter.expressions(), projected_columns);
+                let input = Self::push_down(filter.input(), projected_columns)?
+                    .unwrap_or(filter.input().clone());
+                let new_plan = LogicalPlan::Filter(Filter::try_new(
+                    Arc::new(input),
+                    filter.expressions()[0].clone(),
+                )?);
                 Some(new_plan)
             }
             _ => None,
@@ -121,6 +133,18 @@ impl ProjectionPushDownRule {
                 ));
                 RecursionState::Continue(new_plan)
             }
+            LogicalPlan::Filter(filter) => {
+                Self::collect_columns_by_name(filter.expressions(), columns);
+                let new_projection = LogicalPlan::Projection(Projection::new(
+                    Arc::new(filter.input().clone()),
+                    projection.expressions().to_vec(),
+                ));
+                let new_plan = LogicalPlan::Filter(Filter::try_new(
+                    Arc::new(new_projection),
+                    filter.expressions()[0].clone(),
+                )?);
+                RecursionState::Continue(new_plan)
+            }
 
             _ => RecursionState::Stop(None),
         };
@@ -157,11 +181,15 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        expression::logical::{expr::Expression, expr_fn::col},
+        expression::logical::{
+            expr::Expression,
+            expr_fn::{col, lit},
+        },
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::{projection_pushdown::ProjectionPushDownRule, OptimizerRule},
         plan::logical::{
-            limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan, sort::Sort,
+            filter::Filter, limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan,
+            sort::Sort,
         },
     };
 
@@ -173,6 +201,22 @@ mod tests {
 
     fn create_projection(input: Arc<LogicalPlan>, projection: Vec<Expression>) -> Arc<LogicalPlan> {
         Arc::new(LogicalPlan::Projection(Projection::new(input, projection)))
+    }
+
+    #[test]
+    fn test_projection_pushdown_with_filter() {
+        let input = create_scan();
+        let input = Arc::new(LogicalPlan::Filter(
+            Filter::try_new(input, col("c2").lt(lit(4i64))).unwrap(),
+        ));
+        let input = create_projection(input, vec![col("c1")]);
+
+        let rule = ProjectionPushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{result}"),
+            "Filter: [c2 < 4]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n"
+        );
     }
 
     #[test]
