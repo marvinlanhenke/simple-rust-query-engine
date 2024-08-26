@@ -4,8 +4,8 @@ use crate::{
     error::Result,
     expression::logical::{column::Column, expr::Expression},
     plan::logical::{
-        filter::Filter, limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan,
-        sort::Sort,
+        aggregate::Aggregate, filter::Filter, limit::Limit, plan::LogicalPlan,
+        projection::Projection, scan::Scan, sort::Sort,
     },
 };
 
@@ -52,6 +52,18 @@ impl ProjectionPushDownRule {
                 let new_plan = LogicalPlan::Filter(Filter::try_new(
                     Arc::new(input),
                     filter.expressions()[0].clone(),
+                )?);
+                Some(new_plan)
+            }
+            LogicalPlan::Aggregate(agg) => {
+                Self::collect_columns_by_name(agg.group_by(), projected_columns);
+                Self::collect_columns_by_name(agg.aggregate_expressions(), projected_columns);
+                let input =
+                    Self::push_down(agg.input(), projected_columns)?.unwrap_or(agg.input().clone());
+                let new_plan = LogicalPlan::Aggregate(Aggregate::try_new(
+                    Arc::new(input),
+                    agg.group_by().to_vec(),
+                    agg.aggregate_expressions().to_vec(),
                 )?);
                 Some(new_plan)
             }
@@ -145,6 +157,20 @@ impl ProjectionPushDownRule {
                 )?);
                 RecursionState::Continue(new_plan)
             }
+            LogicalPlan::Aggregate(agg) => {
+                Self::collect_columns_by_name(agg.group_by(), columns);
+                Self::collect_columns_by_name(agg.aggregate_expressions(), columns);
+                let new_projection = LogicalPlan::Projection(Projection::new(
+                    Arc::new(agg.input().clone()),
+                    projection.expressions().to_vec(),
+                ));
+                let new_plan = LogicalPlan::Aggregate(Aggregate::try_new(
+                    Arc::new(new_projection),
+                    agg.group_by().to_vec(),
+                    agg.aggregate_expressions().to_vec(),
+                )?);
+                RecursionState::Continue(new_plan)
+            }
 
             _ => RecursionState::Stop(None),
         };
@@ -183,13 +209,13 @@ mod tests {
     use crate::{
         expression::logical::{
             expr::Expression,
-            expr_fn::{col, lit},
+            expr_fn::{col, lit, sum},
         },
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::{projection_pushdown::ProjectionPushDownRule, OptimizerRule},
         plan::logical::{
-            filter::Filter, limit::Limit, plan::LogicalPlan, projection::Projection, scan::Scan,
-            sort::Sort,
+            aggregate::Aggregate, filter::Filter, limit::Limit, plan::LogicalPlan,
+            projection::Projection, scan::Scan, sort::Sort,
         },
     };
 
@@ -201,6 +227,22 @@ mod tests {
 
     fn create_projection(input: Arc<LogicalPlan>, projection: Vec<Expression>) -> Arc<LogicalPlan> {
         Arc::new(LogicalPlan::Projection(Projection::new(input, projection)))
+    }
+
+    #[test]
+    fn test_projection_pushdown_with_aggregate() {
+        let input = create_scan();
+        let input = Arc::new(LogicalPlan::Aggregate(
+            Aggregate::try_new(input, vec![col("c1"), col("c2")], vec![sum(col("c2"))]).unwrap(),
+        ));
+        let input = create_projection(input, vec![col("c3")]);
+
+        let rule = ProjectionPushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{result}"),
+            "Aggregate: groupBy:[c1, c2]; aggrExprs:[SUM(c2)]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\", \"c3\"]; filter=[[]]\n"
+        );
     }
 
     #[test]
