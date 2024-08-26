@@ -25,15 +25,7 @@ use crate::{
     },
 };
 
-use super::OptimizerRule;
-
-/// Represents the state of the recursion during predicate pushdown.
-enum RecursionState {
-    /// Indicates that the recursion should continue with a given `LogicalPlan`.
-    Continue(LogicalPlan),
-    /// Indicates that the recursion should stop, returning an optional `LogicalPlan`.
-    Stop(Option<LogicalPlan>),
-}
+use super::{OptimizerRule, RecursionState};
 
 /// An optimization rule that performs predicate pushdown.
 ///

@@ -22,3 +22,11 @@ pub trait OptimizerRule: Debug {
     /// by this rule, it returns `None`.
     fn try_optimize(&self, plan: &LogicalPlan) -> Result<Option<LogicalPlan>>;
 }
+
+/// Represents the state of the recursion during predicate pushdown.
+pub enum RecursionState {
+    /// Indicates that the recursion should continue with a given `LogicalPlan`.
+    Continue(LogicalPlan),
+    /// Indicates that the recursion should stop, returning an optional `LogicalPlan`.
+    Stop(Option<LogicalPlan>),
+}
