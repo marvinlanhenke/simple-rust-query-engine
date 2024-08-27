@@ -10,6 +10,7 @@ use crate::{
     plan::{
         logical::{
             aggregate::Aggregate,
+            distinct::Distinct,
             filter::Filter,
             join::{Join, JoinType},
             limit::Limit,
@@ -120,6 +121,7 @@ impl DataFrame {
         }
     }
 
+    /// Performs a join operation on two (left, right) dataframes.
     pub fn join(
         self,
         rhs: DataFrame,
@@ -135,6 +137,17 @@ impl DataFrame {
         let on = left_keys.zip(right_keys).collect::<Vec<_>>();
 
         let plan = LogicalPlan::Join(Join::new(lhs, rhs, on, join_type, filter));
+
+        Self {
+            plan,
+            optimizer: self.optimizer,
+        }
+    }
+
+    /// Performs a distinct operation, removing duplicate rows on a selection.
+    pub fn distinct(self) -> Self {
+        let input = self.plan;
+        let plan = LogicalPlan::Distinct(Distinct::new(Arc::new(input)));
 
         Self {
             plan,
