@@ -182,18 +182,12 @@ mod tests {
         let df = ctx
             .read_csv("testdata/csv/distinct.csv", CsvReadOptions::new())
             .unwrap()
+            .select(vec![col("c1")])
             .distinct();
 
         let expected = vec![
-            "+----+----+----+",
-            "| c1 | c2 | c3 |",
-            "+----+----+----+",
-            "| a  | 1  | 2  |",
-            "| c  | 3  | 4  |",
-            "| d  | 4  | 5  |",
-            "| f  | 6  | 7  |",
-            "| b  | 7  | 8  |",
-            "+----+----+----+",
+            "+----+", "| c1 |", "+----+", "| a  |", "| c  |", "| d  |", "| f  |", "| b  |",
+            "+----+",
         ];
         assert_df_results(&df, expected).await;
     }

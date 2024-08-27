@@ -131,14 +131,9 @@ impl ProjectionPushDownRule {
             LogicalPlan::Projection(proj) => {
                 Self::collect_columns_by_name(proj.expressions(), columns);
 
-                let new_projection = columns
-                    .iter()
-                    .map(|n| Expression::Column(Column::new(n)))
-                    .collect::<Vec<_>>();
-
                 let new_plan = LogicalPlan::Projection(Projection::new(
                     Arc::new(proj.input().clone()),
-                    new_projection,
+                    Self::create_projected_columns(columns),
                 ));
                 RecursionState::Continue(new_plan)
             }
@@ -146,7 +141,7 @@ impl ProjectionPushDownRule {
                 Self::collect_columns_by_name(sort.expressions(), columns);
                 let new_projection = LogicalPlan::Projection(Projection::new(
                     Arc::new(sort.input().clone()),
-                    projection.expressions().to_vec(),
+                    Self::create_projected_columns(columns),
                 ));
                 let new_plan = LogicalPlan::Sort(Sort::new(
                     Arc::new(new_projection),
@@ -157,7 +152,7 @@ impl ProjectionPushDownRule {
             LogicalPlan::Limit(limit) => {
                 let new_projection = LogicalPlan::Projection(Projection::new(
                     Arc::new(limit.input().clone()),
-                    projection.expressions().to_vec(),
+                    Self::create_projected_columns(columns),
                 ));
                 let new_plan = LogicalPlan::Limit(Limit::new(
                     Arc::new(new_projection),
@@ -170,7 +165,7 @@ impl ProjectionPushDownRule {
                 Self::collect_columns_by_name(filter.expressions(), columns);
                 let new_projection = LogicalPlan::Projection(Projection::new(
                     Arc::new(filter.input().clone()),
-                    projection.expressions().to_vec(),
+                    Self::create_projected_columns(columns),
                 ));
                 let new_plan = LogicalPlan::Filter(Filter::try_new(
                     Arc::new(new_projection),
@@ -183,7 +178,7 @@ impl ProjectionPushDownRule {
                 Self::collect_columns_by_name(agg.aggregate_expressions(), columns);
                 let new_projection = LogicalPlan::Projection(Projection::new(
                     Arc::new(agg.input().clone()),
-                    projection.expressions().to_vec(),
+                    Self::create_projected_columns(columns),
                 ));
                 let new_plan = LogicalPlan::Aggregate(Aggregate::try_new(
                     Arc::new(new_projection),
@@ -200,13 +195,14 @@ impl ProjectionPushDownRule {
                     Self::collect_columns_by_name(&[lhs_on.clone()], columns);
                     Self::collect_columns_by_name(&[rhs_on.clone()], columns);
                 }
+                let projected_cols = Self::create_projected_columns(columns);
                 let lhs_new_projection = LogicalPlan::Projection(Projection::new(
                     Arc::new(join.lhs().clone()),
-                    projection.expressions().to_vec(),
+                    projected_cols.clone(),
                 ));
                 let rhs_new_projection = LogicalPlan::Projection(Projection::new(
                     Arc::new(join.rhs().clone()),
-                    projection.expressions().to_vec(),
+                    projected_cols,
                 ));
                 let new_plan = LogicalPlan::Join(Join::new(
                     Arc::new(lhs_new_projection),
@@ -233,6 +229,13 @@ impl ProjectionPushDownRule {
             .map(|c| c.name().to_string())
             .collect::<Vec<_>>();
         columns.extend(columns_by_name);
+    }
+
+    fn create_projected_columns(columns: &[String]) -> Vec<Expression> {
+        columns
+            .iter()
+            .map(|n| Expression::Column(Column::new(n)))
+            .collect::<Vec<_>>()
     }
 }
 

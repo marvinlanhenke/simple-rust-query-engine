@@ -690,12 +690,12 @@ mod tests {
     #[test]
     fn test_predicate_push_down_projection_with_expressions() {
         let input = create_scan();
+        let predicate = col("c2").eq(lit(5i64));
+        let input = create_filter(input, predicate);
         let input = Arc::new(LogicalPlan::Projection(Projection::new(
             input,
             vec![col("c1")],
         )));
-        let predicate = col("c2").eq(lit(5i64));
-        let input = create_filter(input, predicate);
 
         let rule = PredicatePushDownRule::new();
         let result = rule.try_optimize(&input).unwrap().unwrap();

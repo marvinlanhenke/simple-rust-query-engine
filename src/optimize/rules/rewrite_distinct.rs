@@ -133,19 +133,19 @@ mod tests {
     fn test_rewrite_distinct_nested() {
         let input = create_scan();
         let input = Arc::new(LogicalPlan::Distinct(Distinct::new(input)));
+        let input = Arc::new(LogicalPlan::Filter(
+            Filter::try_new(input, col("c2").eq(lit(4i64))).unwrap(),
+        ));
         let input = Arc::new(LogicalPlan::Projection(Projection::new(
             input,
             vec![col("c1")],
         )));
-        let input = Arc::new(LogicalPlan::Filter(
-            Filter::try_new(input, col("c2").eq(lit(4i64))).unwrap(),
-        ));
 
         let rule = RewriteDistinctRule::new();
         let result = rule.try_optimize(&input).unwrap().unwrap();
         assert_eq!(
         format!("{result}"),
-        "Filter: [c2 = 4]\n\tProjection: [c1]\n\t\tAggregate: groupBy:[c1, c2, c3]; aggrExprs:[]\n\t\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        "Projection: [c1]\n\tFilter: [c2 = 4]\n\t\tAggregate: groupBy:[c1, c2, c3]; aggrExprs:[]\n\t\t\tScan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
         )
     }
 }

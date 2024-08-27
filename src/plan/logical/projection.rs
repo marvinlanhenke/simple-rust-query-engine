@@ -1,6 +1,7 @@
 use std::{fmt::Display, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
+use arrow_schema::Schema;
 
 use crate::expression::logical::expr::Expression;
 
@@ -13,12 +14,29 @@ pub struct Projection {
     input: Arc<LogicalPlan>,
     /// A list of expressions to apply.
     expression: Vec<Expression>,
+    /// The projected schema.
+    schema: SchemaRef,
 }
 
 impl Projection {
     /// Creates a new [`Projection`] instance.
     pub fn new(input: Arc<LogicalPlan>, expression: Vec<Expression>) -> Self {
-        Self { input, expression }
+        let input_schema = input.schema();
+        let fields = expression
+            .iter()
+            .filter_map(|expr| match expr {
+                Expression::Column(c) => input_schema.column_with_name(c.name()),
+                _ => None,
+            })
+            .map(|(_, f)| f.clone())
+            .collect::<Vec<_>>();
+        let schema = Arc::new(Schema::new(fields));
+
+        Self {
+            input,
+            expression,
+            schema,
+        }
     }
 
     /// A reference to the input [`LogicalPlan`].
@@ -28,8 +46,7 @@ impl Projection {
 
     /// A reference-counted [`arrow::datatypes::Schema`] of the data source.
     pub fn schema(&self) -> SchemaRef {
-        // return projected schema instead?
-        self.input.schema()
+        self.schema.clone()
     }
 
     /// Retrieves the child logical plans.
