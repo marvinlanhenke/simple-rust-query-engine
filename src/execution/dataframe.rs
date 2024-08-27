@@ -177,6 +177,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_distinct() {
+        let ctx = SessionContext::new();
+        let df = ctx
+            .read_csv("testdata/csv/distinct.csv", CsvReadOptions::new())
+            .unwrap()
+            .distinct();
+
+        let expected = vec![
+            "+----+----+----+",
+            "| c1 | c2 | c3 |",
+            "+----+----+----+",
+            "| a  | 1  | 2  |",
+            "| c  | 3  | 4  |",
+            "| d  | 4  | 5  |",
+            "| f  | 6  | 7  |",
+            "| b  | 7  | 8  |",
+            "+----+----+----+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_inner_join_no_join_keys_with_filters() {
         let ctx = SessionContext::new();
 
