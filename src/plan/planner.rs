@@ -193,6 +193,10 @@ impl Planner {
                     )?))
                 }
             }
+            other => Err(Error::InvalidOperation {
+                message: format!("Query planning is not supported for {other}"),
+                location: location!(),
+            }),
         }
     }
 
