@@ -217,6 +217,7 @@ impl ProjectionPushDownRule {
                 ));
                 RecursionState::Continue(new_plan)
             }
+            _ => RecursionState::Stop(None),
         };
 
         Ok(new_plan)
