@@ -3,8 +3,8 @@ use std::fmt::Display;
 use arrow::datatypes::SchemaRef;
 
 use super::{
-    aggregate::Aggregate, filter::Filter, join::Join, limit::Limit, projection::Projection,
-    scan::Scan, sort::Sort,
+    aggregate::Aggregate, distinct::Distinct, filter::Filter, join::Join, limit::Limit,
+    projection::Projection, scan::Scan, sort::Sort,
 };
 
 /// Represents a [`LogicalPlan`] for query execution.
@@ -38,6 +38,9 @@ pub enum LogicalPlan {
     /// Represents a join operation, that joins two logical plans
     /// on one more more join columns, e.g. "SELECT a, b FROM t1 JOIN t2 ON a = b;"
     Join(Join),
+    /// Remove duplicate rows from the input.
+    /// For example "SELECT DISTINCT ...".
+    Distinct(Distinct),
 }
 
 impl LogicalPlan {
@@ -51,6 +54,7 @@ impl LogicalPlan {
             LogicalPlan::Sort(plan) => plan.schema(),
             LogicalPlan::Limit(plan) => plan.schema(),
             LogicalPlan::Join(plan) => plan.schema(),
+            LogicalPlan::Distinct(plan) => plan.schema(),
         }
     }
 
@@ -64,6 +68,7 @@ impl LogicalPlan {
             LogicalPlan::Sort(plan) => plan.children(),
             LogicalPlan::Limit(plan) => plan.children(),
             LogicalPlan::Join(plan) => plan.children(),
+            LogicalPlan::Distinct(plan) => plan.children(),
         }
     }
 }
@@ -92,6 +97,7 @@ pub fn format_plan(
         LogicalPlan::Sort(plan) => write!(f, "{}", plan)?,
         LogicalPlan::Limit(plan) => write!(f, "{}", plan)?,
         LogicalPlan::Join(plan) => write!(f, "{}", plan)?,
+        LogicalPlan::Distinct(plan) => write!(f, "{}", plan)?,
     }
     writeln!(f)?;
 
