@@ -4,7 +4,7 @@ use crate::{error::Result, plan::logical::plan::LogicalPlan};
 
 use super::rules::{
     predicate_pushdown::PredicatePushDownRule, projection_pushdown::ProjectionPushDownRule,
-    OptimizerRule,
+    rewrite_distinct::RewriteDistinctRule, OptimizerRule,
 };
 
 /// Represents the query optimizer, which applies a series of optimization rules
@@ -25,6 +25,7 @@ impl Optimizer {
     /// Creates a new `Optimizer` instance with a default set of optimization rules.
     pub fn new() -> Self {
         let rules: Vec<Arc<dyn OptimizerRule>> = vec![
+            Arc::new(RewriteDistinctRule::new()),
             Arc::new(PredicatePushDownRule::new()),
             Arc::new(ProjectionPushDownRule::new()),
         ];
