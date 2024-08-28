@@ -35,7 +35,7 @@ impl Filter {
                     &e.rhs().data_type(&schema)?,
                 )?;
                 let lhs = Arc::new(e.lhs().cast_to(&lhs_type, &schema)?);
-                let rhs = Arc::new(e.lhs().cast_to(&rhs_type, &schema)?);
+                let rhs = Arc::new(e.rhs().cast_to(&rhs_type, &schema)?);
 
                 Expression::Binary(Binary::new(lhs, e.op().clone(), rhs))
             }

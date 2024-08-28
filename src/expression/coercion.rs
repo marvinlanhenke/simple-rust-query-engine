@@ -148,17 +148,17 @@ mod tests {
     use super::Signature;
 
     #[test]
-    fn test_signature_coercion_err() {
+    fn test_signature_coercion() {
         let lhs = DataType::Int32;
         let rhs = DataType::Int64;
         let op = Operator::Eq;
         let sig = Signature::try_new(&lhs, &op, &rhs);
-        let input_type = Signature::get_input_types(&lhs, &op, &rhs);
-        let result_type = Signature::get_result_type(&lhs, &op, &rhs);
+        let input_type = Signature::get_input_types(&lhs, &op, &rhs).unwrap();
+        let result_type = Signature::get_result_type(&lhs, &op, &rhs).unwrap();
 
-        assert!(sig.is_err());
-        assert!(input_type.is_err());
-        assert!(result_type.is_err());
+        assert!(sig.is_ok());
+        assert_eq!(input_type, (DataType::Int64, DataType::Int64));
+        assert_eq!(result_type, DataType::Boolean);
     }
 
     #[test]
