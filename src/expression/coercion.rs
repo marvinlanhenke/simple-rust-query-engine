@@ -1,8 +1,9 @@
 use arrow::{
-    array::{new_empty_array, ArrayRef},
+    array::new_empty_array,
     compute::kernels::numeric::{add_wrapping, div, mul_wrapping, sub_wrapping},
     datatypes::DataType,
 };
+
 use snafu::location;
 
 use crate::error::{Error, Result};
@@ -37,18 +38,15 @@ impl Signature {
             }
         };
 
-        // no type coercion supported yet
         match op {
-            Eq | NotEq | Lt | LtEq | Gt | GtEq => {
-                if lhs != rhs {
-                    return Err(coercion_err(lhs, op, rhs));
-                }
-                Ok(Self {
-                    lhs: lhs.clone(),
-                    rhs: lhs.clone(),
-                    ret: DataType::Boolean,
-                })
-            }
+            Eq | NotEq | Lt | LtEq | Gt | GtEq => match Self::comparision_coercion(lhs, rhs) {
+                Some(data_type) => Ok(Self {
+                    lhs: data_type.clone(),
+                    rhs: data_type,
+                    ret: Boolean,
+                }),
+                None => Err(coercion_err(lhs, op, rhs)),
+            },
             Or | And => {
                 if !matches!((lhs, rhs), (Boolean | Null, Boolean | Null)) {
                     return Err(coercion_err(lhs, op, rhs));
@@ -60,12 +58,9 @@ impl Signature {
                 })
             }
             Plus | Minus | Multiply | Divide => {
-                if lhs != rhs {
-                    return Err(coercion_err(lhs, op, rhs));
-                }
                 let left = new_empty_array(lhs);
                 let right = new_empty_array(rhs);
-                let result: ArrayRef = match op {
+                let result = match op {
                     Plus => add_wrapping(&left, &right)?,
                     Minus => sub_wrapping(&left, &right)?,
                     Multiply => mul_wrapping(&left, &right)?,
@@ -93,6 +88,54 @@ impl Signature {
         rhs: &DataType,
     ) -> Result<(DataType, DataType)> {
         Self::try_new(lhs, op, rhs).map(|sig| (sig.lhs, sig.rhs))
+    }
+
+    fn comparision_coercion(lhs: &DataType, rhs: &DataType) -> Option<DataType> {
+        if lhs == rhs {
+            return Some(lhs.clone());
+        }
+
+        Self::binary_numeric_coercion(lhs, rhs)
+    }
+
+    fn binary_numeric_coercion(lhs: &DataType, rhs: &DataType) -> Option<DataType> {
+        use DataType::*;
+
+        if !lhs.is_numeric() | !rhs.is_numeric() {
+            return None;
+        }
+
+        match (lhs, rhs) {
+            (Float64, _) | (_, Float64) => Some(Float64),
+            (Float32, _) | (_, Float32) => Some(Float32),
+            (Int64, _)
+            | (_, Int64)
+            | (UInt64, Int8)
+            | (Int8, UInt64)
+            | (UInt64, Int16)
+            | (Int16, UInt64)
+            | (UInt64, Int32)
+            | (Int32, UInt64)
+            | (UInt32, Int8)
+            | (Int8, UInt32)
+            | (UInt32, Int16)
+            | (Int16, UInt32)
+            | (UInt32, Int32)
+            | (Int32, UInt32) => Some(Int64),
+            (UInt64, _) | (_, UInt64) => Some(UInt64),
+            (Int32, _)
+            | (_, Int32)
+            | (UInt16, Int16)
+            | (Int16, UInt16)
+            | (UInt16, Int8)
+            | (Int8, UInt16) => Some(Int32),
+            (UInt32, _) | (_, UInt32) => Some(UInt32),
+            (Int16, _) | (_, Int16) | (Int8, UInt8) | (UInt8, Int8) => Some(Int16),
+            (UInt16, _) | (_, UInt16) => Some(UInt16),
+            (Int8, _) | (_, Int8) => Some(Int8),
+            (UInt8, _) | (_, UInt8) => Some(UInt8),
+            _ => None,
+        }
     }
 }
 
@@ -143,6 +186,20 @@ mod tests {
 
         assert!(sig.is_ok());
         assert_eq!(input_type, (DataType::Boolean, DataType::Boolean));
+        assert_eq!(result_type, DataType::Boolean);
+    }
+
+    #[test]
+    fn test_signature_cmp_coercion() {
+        let lhs = DataType::Int64;
+        let rhs = DataType::Int32;
+        let op = Operator::Eq;
+        let sig = Signature::try_new(&lhs, &op, &rhs);
+        let input_type = Signature::get_input_types(&lhs, &op, &rhs).unwrap();
+        let result_type = Signature::get_result_type(&lhs, &op, &rhs).unwrap();
+
+        assert!(sig.is_ok());
+        assert_eq!(input_type, (DataType::Int64, DataType::Int64));
         assert_eq!(result_type, DataType::Boolean);
     }
 
