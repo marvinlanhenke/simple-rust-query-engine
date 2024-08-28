@@ -79,13 +79,13 @@ impl ProjectionPushDownRule {
                     Self::push_down(join.lhs(), projected_columns)?.unwrap_or(join.lhs().clone());
                 let rhs_input =
                     Self::push_down(join.rhs(), projected_columns)?.unwrap_or(join.rhs().clone());
-                let new_plan = LogicalPlan::Join(Join::new(
+                let new_plan = LogicalPlan::Join(Join::try_new(
                     Arc::new(lhs_input),
                     Arc::new(rhs_input),
                     join.on().to_vec(),
                     join.join_type(),
                     join.filter().cloned(),
-                ));
+                )?);
                 Some(new_plan)
             }
             _ => None,
@@ -204,13 +204,13 @@ impl ProjectionPushDownRule {
                     Arc::new(join.rhs().clone()),
                     projected_cols,
                 ));
-                let new_plan = LogicalPlan::Join(Join::new(
+                let new_plan = LogicalPlan::Join(Join::try_new(
                     Arc::new(lhs_new_projection),
                     Arc::new(rhs_new_projection),
                     join.on().to_vec(),
                     join.join_type(),
                     join.filter().cloned(),
-                ));
+                )?);
                 RecursionState::Continue(new_plan)
             }
             _ => RecursionState::Stop(None),
@@ -287,13 +287,9 @@ mod tests {
     fn test_projection_pushdown_with_join() {
         let lhs = create_scan();
         let rhs = create_scan();
-        let input = Arc::new(LogicalPlan::Join(Join::new(
-            lhs,
-            rhs,
-            vec![(col("c1"), col("c1"))],
-            JoinType::Left,
-            None,
-        )));
+        let input = Arc::new(LogicalPlan::Join(
+            Join::try_new(lhs, rhs, vec![(col("c1"), col("c1"))], JoinType::Left, None).unwrap(),
+        ));
 
         let input = create_projection(input, vec![col("c2")]);
 

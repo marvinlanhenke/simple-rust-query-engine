@@ -129,19 +129,19 @@ impl DataFrame {
         on_left: &[&str],
         on_right: &[&str],
         filter: Option<Expression>,
-    ) -> Self {
+    ) -> Result<Self> {
         let lhs = Arc::new(self.plan);
         let rhs = Arc::new(rhs.plan);
         let left_keys = on_left.iter().map(|name| col(name.to_string()));
         let right_keys = on_right.iter().map(|name| col(name.to_string()));
         let on = left_keys.zip(right_keys).collect::<Vec<_>>();
 
-        let plan = LogicalPlan::Join(Join::new(lhs, rhs, on, join_type, filter));
+        let plan = LogicalPlan::Join(Join::try_new(lhs, rhs, on, join_type, filter)?);
 
-        Self {
+        Ok(Self {
             plan,
             optimizer: self.optimizer,
-        }
+        })
     }
 
     /// Performs a distinct operation, removing duplicate rows on a selection.
@@ -203,8 +203,10 @@ mod tests {
             .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
             .unwrap();
 
-        let filter = col("l2").gt(lit(1i64));
-        let df = lhs.join(rhs, JoinType::Inner, &[], &[], Some(filter));
+        let filter = col("l2").gt(lit(1));
+        let df = lhs
+            .join(rhs, JoinType::Inner, &[], &[], Some(filter))
+            .unwrap();
 
         let expected = vec![
             "+----+----+----+----+-----+------+",
@@ -241,7 +243,7 @@ mod tests {
             .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
             .unwrap();
 
-        let df = lhs.join(rhs, JoinType::Inner, &[], &[], None);
+        let df = lhs.join(rhs, JoinType::Inner, &[], &[], None).unwrap();
 
         let expected = vec![
             "+----+----+----+----+-----+------+",
@@ -281,8 +283,10 @@ mod tests {
             .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
             .unwrap();
 
-        let filter = col("l2").gt(lit(1i64));
-        let df = lhs.join(rhs, JoinType::Inner, &["l1"], &["r1"], Some(filter));
+        let filter = col("l2").gt(lit(1));
+        let df = lhs
+            .join(rhs, JoinType::Inner, &["l1"], &["r1"], Some(filter))
+            .unwrap();
 
         let expected = vec![
             "+----+----+----+----+-----+------+",
@@ -306,7 +310,9 @@ mod tests {
             .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
             .unwrap();
 
-        let df = lhs.join(rhs, JoinType::Inner, &["l1"], &["r1"], None);
+        let df = lhs
+            .join(rhs, JoinType::Inner, &["l1"], &["r1"], None)
+            .unwrap();
 
         let expected = vec![
             "+----+----+----+----+-----+------+",
@@ -332,7 +338,9 @@ mod tests {
             .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
             .unwrap();
 
-        let df = lhs.join(rhs, JoinType::Inner, &["l1"], &["r1"], None);
+        let df = lhs
+            .join(rhs, JoinType::Inner, &["l1"], &["r1"], None)
+            .unwrap();
 
         let expected = vec![
             "+----+----+----+----+-----+------+",
@@ -358,7 +366,9 @@ mod tests {
             .unwrap();
 
         let filter = col("l1").neq(lit("a"));
-        let df = lhs.join(rhs, JoinType::Left, &["l1"], &["r1"], Some(filter));
+        let df = lhs
+            .join(rhs, JoinType::Left, &["l1"], &["r1"], Some(filter))
+            .unwrap();
 
         let expected = vec![
             "+----+----+----+----+-----+------+",
@@ -386,7 +396,9 @@ mod tests {
             .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
             .unwrap();
 
-        let df = lhs.join(rhs, JoinType::Left, &["l1"], &["r1"], None);
+        let df = lhs
+            .join(rhs, JoinType::Left, &["l1"], &["r1"], None)
+            .unwrap();
 
         let expected = vec![
             "+----+----+----+----+-----+------+",
@@ -415,7 +427,9 @@ mod tests {
             .read_csv("testdata/csv/join_right.csv", CsvReadOptions::new())
             .unwrap();
 
-        let df = lhs.join(rhs, JoinType::Left, &["l1"], &["r1"], None);
+        let df = lhs
+            .join(rhs, JoinType::Left, &["l1"], &["r1"], None)
+            .unwrap();
 
         let expected = vec![
             "+----+----+----+----+-----+------+",

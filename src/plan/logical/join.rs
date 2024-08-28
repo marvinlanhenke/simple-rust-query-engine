@@ -2,7 +2,10 @@ use std::{fmt::Display, sync::Arc};
 
 use arrow_schema::{FieldRef, Schema, SchemaRef};
 
-use crate::expression::logical::expr::Expression;
+use crate::{
+    error::Result,
+    expression::{coercion::coerce_binary_expression, logical::expr::Expression},
+};
 
 use super::plan::LogicalPlan;
 
@@ -45,22 +48,26 @@ pub struct Join {
 
 impl Join {
     /// Creates a new [`Join`] instance.
-    pub fn new(
+    pub fn try_new(
         lhs: Arc<LogicalPlan>,
         rhs: Arc<LogicalPlan>,
         on: Vec<(Expression, Expression)>,
         join_type: JoinType,
         filter: Option<Expression>,
-    ) -> Self {
+    ) -> Result<Self> {
         let schema = Self::create_join_schema(lhs.schema(), rhs.schema(), &join_type);
-        Self {
+        let coerced_filter = filter
+            .map(|expr| coerce_binary_expression(&schema, &expr))
+            .transpose()?;
+
+        Ok(Self {
             lhs,
             rhs,
             on,
             join_type,
-            filter,
+            filter: coerced_filter,
             schema,
-        }
+        })
     }
 
     /// Retrieves the left input `LogicalPlan`.

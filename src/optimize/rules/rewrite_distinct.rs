@@ -81,13 +81,13 @@ impl RewriteDistinctRule {
             LogicalPlan::Join(join) => {
                 let lhs = Self::rewrite(join.lhs())?.unwrap_or(join.lhs().clone());
                 let rhs = Self::rewrite(join.rhs())?.unwrap_or(join.rhs().clone());
-                let new_plan = LogicalPlan::Join(Join::new(
+                let new_plan = LogicalPlan::Join(Join::try_new(
                     Arc::new(lhs),
                     Arc::new(rhs),
                     join.on().to_vec(),
                     join.join_type(),
                     join.filter().cloned(),
-                ));
+                )?);
                 Some(new_plan)
             }
             _ => Some(plan.clone()),

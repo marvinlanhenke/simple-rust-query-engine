@@ -77,13 +77,13 @@ impl PredicatePushDownRule {
             LogicalPlan::Join(join) => {
                 let lhs = Self::push_down(join.lhs())?.unwrap_or(join.lhs().clone());
                 let rhs = Self::push_down(join.rhs())?.unwrap_or(join.rhs().clone());
-                let new_plan = LogicalPlan::Join(Join::new(
+                let new_plan = LogicalPlan::Join(Join::try_new(
                     Arc::new(lhs),
                     Arc::new(rhs),
                     join.on().to_vec(),
                     join.join_type(),
                     join.filter().cloned(),
-                ));
+                )?);
                 Some(new_plan)
             }
             _ => None,
@@ -354,13 +354,13 @@ impl PredicatePushDownRule {
             None => join.rhs().clone(),
         };
 
-        let new_join_plan = LogicalPlan::Join(Join::new(
+        let new_join_plan = LogicalPlan::Join(Join::try_new(
             Arc::new(new_lhs_plan),
             Arc::new(new_rhs_plan),
             join.on().to_vec(),
             join.join_type(),
             Self::conjunction(join_conditions),
-        ));
+        )?);
 
         match Self::conjunction(keep_predicates) {
             Some(predicate) => {
@@ -541,13 +541,16 @@ mod tests {
         let lhs = create_scan();
         let rhs = create_scan();
 
-        let input = Arc::new(LogicalPlan::Join(Join::new(
-            lhs,
-            rhs,
-            vec![(col("c1"), col("c1"))],
-            JoinType::Inner,
-            None,
-        )));
+        let input = Arc::new(LogicalPlan::Join(
+            Join::try_new(
+                lhs,
+                rhs,
+                vec![(col("c1"), col("c1"))],
+                JoinType::Inner,
+                None,
+            )
+            .unwrap(),
+        ));
         let predicate = col("c2").eq(lit(5i64));
         let input = create_filter(input, predicate);
 
@@ -564,13 +567,9 @@ mod tests {
         let lhs = create_scan();
         let rhs = create_scan();
 
-        let input = Arc::new(LogicalPlan::Join(Join::new(
-            lhs,
-            rhs,
-            vec![(col("c1"), col("c1"))],
-            JoinType::Left,
-            None,
-        )));
+        let input = Arc::new(LogicalPlan::Join(
+            Join::try_new(lhs, rhs, vec![(col("c1"), col("c1"))], JoinType::Left, None).unwrap(),
+        ));
         let predicate = col("c2").eq(lit(5i64));
         let input = create_filter(input, predicate);
 
