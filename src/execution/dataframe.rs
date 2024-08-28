@@ -546,6 +546,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_filter_csv_with_coercion() {
+        let ctx = SessionContext::new();
+        let df = ctx
+            .read_csv("testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap()
+            .select(vec![col("c1"), col("c2")])
+            .filter(col("c2").neq(lit(2)))
+            .unwrap();
+
+        let result = df.collect().await.unwrap();
+
+        assert_eq!(result[0].num_rows(), 5);
+        assert_eq!(result[0].num_columns(), 2);
+    }
+
+    #[tokio::test]
     async fn test_dataframe_filter_csv() {
         let ctx = SessionContext::new();
         let df = ctx
