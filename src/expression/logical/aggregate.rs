@@ -35,8 +35,6 @@ impl AggregateFunction {
 
     /// Returns the result data type of the aggregate function.
     pub fn result_type(&self) -> Result<DataType> {
-        // TODO: Avoid hard-coding the values,
-        // should be determined by input data_type; or up/downcasted?
         match self {
             AggregateFunction::Count => Ok(DataType::Int64),
             AggregateFunction::Sum => Ok(DataType::Int64),
