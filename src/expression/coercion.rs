@@ -1,14 +1,20 @@
+use std::sync::Arc;
+
 use arrow::{
     array::new_empty_array,
     compute::kernels::numeric::{add_wrapping, div, mul_wrapping, sub_wrapping},
     datatypes::DataType,
 };
 
+use arrow_schema::Schema;
 use snafu::location;
 
 use crate::error::{Error, Result};
 
-use super::operator::Operator;
+use super::{
+    logical::{binary::Binary, expr::Expression},
+    operator::Operator,
+};
 
 /// Represents the signature of an operation,
 /// including the input and output data types.
@@ -137,6 +143,26 @@ impl Signature {
             _ => None,
         }
     }
+}
+
+/// Coerces a binary expression and returns new coerced expression.
+pub fn coerce_binary_expression(schema: &Schema, expression: &Expression) -> Result<Expression> {
+    let coerced = match expression {
+        Expression::Binary(e) => {
+            let (lhs_type, rhs_type) = Signature::get_input_types(
+                &e.lhs().data_type(schema)?,
+                e.op(),
+                &e.rhs().data_type(schema)?,
+            )?;
+            let lhs = Arc::new(e.lhs().cast_to(&lhs_type, schema)?);
+            let rhs = Arc::new(e.rhs().cast_to(&rhs_type, schema)?);
+
+            Expression::Binary(Binary::new(lhs, e.op().clone(), rhs))
+        }
+        _ => expression.clone(),
+    };
+
+    Ok(coerced)
 }
 
 #[cfg(test)]

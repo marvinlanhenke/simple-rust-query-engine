@@ -5,10 +5,7 @@ use snafu::location;
 
 use crate::{
     error::{Error, Result},
-    expression::{
-        coercion::Signature,
-        logical::{binary::Binary, expr::Expression},
-    },
+    expression::{coercion::coerce_binary_expression, logical::expr::Expression},
 };
 
 use super::plan::LogicalPlan;
@@ -27,20 +24,7 @@ impl Filter {
     pub fn try_new(input: Arc<LogicalPlan>, predicate: Expression) -> Result<Self> {
         let schema = input.schema();
 
-        let coerced = match predicate {
-            Expression::Binary(e) => {
-                let (lhs_type, rhs_type) = Signature::get_input_types(
-                    &e.lhs().data_type(&schema)?,
-                    e.op(),
-                    &e.rhs().data_type(&schema)?,
-                )?;
-                let lhs = Arc::new(e.lhs().cast_to(&lhs_type, &schema)?);
-                let rhs = Arc::new(e.rhs().cast_to(&rhs_type, &schema)?);
-
-                Expression::Binary(Binary::new(lhs, e.op().clone(), rhs))
-            }
-            _ => predicate.clone(),
-        };
+        let coerced = coerce_binary_expression(&schema, &predicate)?;
 
         if coerced.data_type(&input.schema())? != DataType::Boolean {
             return Err(Error::InvalidData {
