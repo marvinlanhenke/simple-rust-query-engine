@@ -5,7 +5,10 @@ use crate::{
     expression::{coercion::Signature, operator::Operator, values::ScalarValue},
     plan::logical::plan::LogicalPlan,
 };
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::{
+    compute::{cast_with_options, CastOptions},
+    datatypes::{DataType, Field, Schema},
+};
 use snafu::location;
 
 use super::{
@@ -62,6 +65,29 @@ impl Expression {
             }
             Aggregate(e) => e.result_type(),
             Sort(e) => e.expression().data_type(schema),
+        }
+    }
+
+    pub fn cast_to(&self, to_type: &DataType, schema: &Schema) -> Result<Expression> {
+        use Expression::*;
+
+        let original_type = self.data_type(schema)?;
+
+        if original_type == *to_type {
+            return Ok(self.clone());
+        };
+
+        match self {
+            Literal(scalar) => {
+                let cast_options = CastOptions {
+                    safe: false,
+                    format_options: Default::default(),
+                };
+                let array = cast_with_options(&scalar.to_array(1), to_type, &cast_options)?;
+
+                Ok(Expression::Literal(ScalarValue::try_from_array(&array, 0)?))
+            }
+            _ => Ok(self.clone()),
         }
     }
 

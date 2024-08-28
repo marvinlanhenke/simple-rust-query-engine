@@ -5,7 +5,10 @@ use snafu::location;
 
 use crate::{
     error::{Error, Result},
-    expression::logical::expr::Expression,
+    expression::{
+        coercion::Signature,
+        logical::{binary::Binary, expr::Expression},
+    },
 };
 
 use super::plan::LogicalPlan;
@@ -22,17 +25,37 @@ pub struct Filter {
 impl Filter {
     /// Attempts to create a new [`Filter`] instance.
     pub fn try_new(input: Arc<LogicalPlan>, predicate: Expression) -> Result<Self> {
-        if predicate.data_type(&input.schema())? != DataType::Boolean {
+        let schema = input.schema();
+
+        let coerced = match predicate {
+            Expression::Binary(e) => {
+                let (lhs_type, rhs_type) = Signature::get_input_types(
+                    &e.lhs().data_type(&schema)?,
+                    e.op(),
+                    &e.rhs().data_type(&schema)?,
+                )?;
+                let lhs = Arc::new(e.lhs().cast_to(&lhs_type, &schema)?);
+                let rhs = Arc::new(e.lhs().cast_to(&rhs_type, &schema)?);
+
+                Expression::Binary(Binary::new(lhs, e.op().clone(), rhs))
+            }
+            _ => predicate.clone(),
+        };
+
+        if coerced.data_type(&input.schema())? != DataType::Boolean {
             return Err(Error::InvalidData {
                 message: format!(
                     "Cannot create filter with non-boolean predicate '{}'",
-                    predicate
+                    coerced
                 ),
                 location: location!(),
             });
         };
 
-        Ok(Self { input, predicate })
+        Ok(Self {
+            input,
+            predicate: coerced,
+        })
     }
 
     /// Retrieves the input [`LogicalPlan`].
