@@ -5,7 +5,6 @@ use crate::{error::Result, plan::logical::plan::LogicalPlan};
 pub mod predicate_pushdown;
 pub mod projection_pushdown;
 pub mod rewrite_distinct;
-pub mod type_coercion;
 pub mod utils;
 
 /// A trait that defines a rule for optimizing logical plans.
