@@ -1,8 +1,9 @@
 use std::{fmt::Display, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
+use arrow_schema::Schema;
 
-use crate::{expression::logical::expr::Expression, utils::project_schema};
+use crate::expression::logical::expr::Expression;
 
 use super::plan::LogicalPlan;
 
@@ -20,7 +21,16 @@ pub struct Projection {
 impl Projection {
     /// Creates a new [`Projection`] instance.
     pub fn new(input: Arc<LogicalPlan>, expression: Vec<Expression>) -> Self {
-        let schema = Arc::new(project_schema(&input.schema(), &expression));
+        let input_schema = input.schema();
+        let fields = expression
+            .iter()
+            .filter_map(|expr| match expr {
+                Expression::Column(c) => input_schema.column_with_name(c.name()),
+                _ => None,
+            })
+            .map(|(_, f)| f.clone())
+            .collect::<Vec<_>>();
+        let schema = Arc::new(Schema::new(fields));
 
         Self {
             input,
