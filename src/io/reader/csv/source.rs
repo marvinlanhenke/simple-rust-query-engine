@@ -56,7 +56,7 @@ impl CsvDataSource {
     /// the Arrow CSV reader to read the file and infer its schema. The schema
     /// inference process reads up to `max_records` to determine the data types
     /// of the columns.
-    fn infer_schema(path: &str, options: &CsvReadOptions) -> Result<SchemaRef> {
+    pub fn infer_schema(path: &str, options: &CsvReadOptions) -> Result<SchemaRef> {
         let file = File::open(path)?;
         let format = arrow::csv::reader::Format::default()
             .with_header(options.has_header())
