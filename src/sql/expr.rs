@@ -25,7 +25,10 @@ pub fn sql_expr_to_logical_expr(expr: &Expr) -> Result<Expression> {
             )))
         }
         Expr::Identifier(ident) => Ok(Expression::Column(Column::new(ident.value.clone()))),
-        _ => todo!(),
+        _ => Err(Error::InvalidOperation {
+            message: format!("SQL expression {} is not supported yet", expr),
+            location: location!(),
+        }),
     }
 }
 
