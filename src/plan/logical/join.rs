@@ -107,7 +107,7 @@ impl Join {
 
     /// Creates the output schema for a join operation.
     /// The fields from the left-hand-side are created first.
-    fn create_join_schema(
+    pub fn create_join_schema(
         left_schema: SchemaRef,
         right_schema: SchemaRef,
         join_type: &JoinType,
