@@ -177,6 +177,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_sql_select_with_filter() {
+        let ctx = SessionContext::new();
+        ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = ctx.sql("SELECT * FROM simple WHERE c2 <= 3").unwrap();
+
+        let expected = vec![
+            "+----+----+----+",
+            "| c1 | c2 | c3 |",
+            "+----+----+----+",
+            "| a  | 1  | 2  |",
+            "| b  | 2  | 3  |",
+            "| c  | 3  | 4  |",
+            "+----+----+----+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_sql_select_with_join() {
         let ctx = SessionContext::new();
         ctx.register_csv("lhs", "testdata/csv/simple.csv", CsvReadOptions::new())

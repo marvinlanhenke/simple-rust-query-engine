@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use snafu::location;
-use sqlparser::ast::{BinaryOperator, Expr};
+use sqlparser::ast::{BinaryOperator, Expr, Value};
 
 use crate::{
     error::{Error, Result},
     expression::{
-        logical::{binary::Binary, column::Column, expr::Expression},
+        logical::{binary::Binary, column::Column, expr::Expression, expr_fn::lit},
         operator::Operator,
+        values::ScalarValue,
     },
 };
 
@@ -25,6 +26,33 @@ pub fn sql_expr_to_logical_expr(expr: &Expr) -> Result<Expression> {
             )))
         }
         Expr::Identifier(ident) => Ok(Expression::Column(Column::new(ident.value.clone()))),
+        Expr::Value(value) => match value {
+            Value::Null => Ok(Expression::Literal(ScalarValue::Null)),
+            Value::Boolean(b) => Ok(Expression::Literal(ScalarValue::Boolean(Some(*b)))),
+            Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) => Ok(lit(s)),
+            Value::Number(n, _) => {
+                if let Ok(n) = n.parse::<i64>() {
+                    return Ok(lit(n));
+                }
+
+                if let Ok(n) = n.parse::<u64>() {
+                    return Ok(lit(n));
+                }
+
+                if let Ok(n) = n.parse::<f64>() {
+                    Ok(Expression::Literal(ScalarValue::Float64(Some(n))))
+                } else {
+                    Err(Error::InvalidData {
+                        message: format!("Cannot parse {n} as number"),
+                        location: location!(),
+                    })
+                }
+            }
+            _ => Err(Error::InvalidOperation {
+                message: format!("SQL value expression {} is not supported yet", value),
+                location: location!(),
+            }),
+        },
         _ => Err(Error::InvalidOperation {
             message: format!("SQL expression {} is not supported yet", expr),
             location: location!(),

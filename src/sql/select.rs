@@ -1,12 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use snafu::location;
-use sqlparser::ast::{ObjectName, Query, SetExpr, TableFactor, TableWithJoins};
+use sqlparser::ast::{Expr, ObjectName, Query, SetExpr, TableFactor, TableWithJoins};
 
 use crate::{
     error::{Error, Result},
     io::reader::listing::table::ListingTable,
-    plan::logical::{plan::LogicalPlan, scan::Scan},
+    plan::logical::{filter::Filter, plan::LogicalPlan, scan::Scan},
+    sql::expr::sql_expr_to_logical_expr,
 };
 
 use super::join::parse_join_relation;
@@ -23,12 +24,27 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
             // process disctinct
             // apply limit
 
-            plan_from_tables(select.from, tables)
+            let plan = plan_from_tables(select.from, tables)?;
+            let plan = plan_from_selection(plan, select.selection)?;
+
+            Ok(plan)
         }
         _ => Err(Error::InvalidOperation {
             message: "Only select statements are supported".to_string(),
             location: location!(),
         }),
+    }
+}
+
+fn plan_from_selection(plan: LogicalPlan, selection: Option<Expr>) -> Result<LogicalPlan> {
+    match selection {
+        Some(expr) => {
+            let predicate = sql_expr_to_logical_expr(&expr)?;
+            let plan = LogicalPlan::Filter(Filter::try_new(Arc::new(plan), predicate)?);
+
+            Ok(plan)
+        }
+        None => Ok(plan),
     }
 }
 
@@ -102,6 +118,36 @@ mod tests {
 
     use super::query_to_plan;
 
+    fn create_single_table() -> HashMap<String, ListingTable> {
+        let schema = create_schema();
+        let listing_table = ListingTable::new(
+            "simple",
+            "testdata/csv/simple.csv",
+            Arc::new(schema),
+            FileFormat::Csv,
+        );
+        HashMap::from([("simple".to_string(), listing_table)])
+    }
+
+    #[test]
+    fn test_query_to_plan_select_with_filter() {
+        let tables = create_single_table();
+        let sql = "SELECT * FROM simple WHERE c1 = 'a'";
+        let mut parser = WrappedParser::try_new(sql).unwrap();
+        let statement = parser.try_parse().unwrap();
+
+        let result = match statement {
+            Statement::Query(query) => query_to_plan(*query, &tables).unwrap(),
+            _ => panic!(),
+        };
+
+        assert_eq!(
+            format!("{}", result),
+            "Filter: [c1 = a]\n\t\
+                Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        )
+    }
+
     #[test]
     fn test_query_to_plan_select_with_join() {
         let schema = Arc::new(create_schema());
@@ -133,15 +179,7 @@ mod tests {
 
     #[test]
     fn test_query_to_plan_select_all() {
-        let schema = create_schema();
-        let listing_table = ListingTable::new(
-            "simple",
-            "testdata/csv/simple.csv",
-            Arc::new(schema),
-            FileFormat::Csv,
-        );
-        let tables = HashMap::from([("simple".to_string(), listing_table)]);
-
+        let tables = create_single_table();
         let sql = "SELECT * FROM simple";
         let mut parser = WrappedParser::try_new(sql).unwrap();
         let statement = parser.try_parse().unwrap();
