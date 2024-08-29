@@ -2,9 +2,12 @@ use std::sync::Arc;
 
 use crate::{
     error::Result,
-    io::reader::{
-        csv::{options::CsvReadOptions, source::CsvDataSource},
-        listing::table::ListingTable,
+    io::{
+        reader::{
+            csv::{options::CsvReadOptions, source::CsvDataSource},
+            listing::table::ListingTable,
+        },
+        FileFormat,
     },
     plan::logical::{plan::LogicalPlan, scan::Scan},
 };
@@ -43,9 +46,25 @@ impl SessionContext {
             Some(schema) => schema,
             None => CsvDataSource::infer_schema(path, &options)?,
         };
-        let table = Some(ListingTable::new(name, path, resolved_schema));
+        let table = Some(ListingTable::new(
+            name,
+            path,
+            resolved_schema,
+            FileFormat::Csv,
+        ));
 
         Ok(Self { table })
+    }
+
+    /// Creates a `DataFrame` from SQL query text.
+    pub fn sql(&self, _sql: &str) -> Result<DataFrame> {
+        // create logical plan
+        // 1. sql_to_statement
+        // 2. statement_to_plan
+
+        // return dataframe with plan
+        // Ok(DataFrame::new(plan))
+        todo!()
     }
 }
 

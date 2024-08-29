@@ -51,3 +51,9 @@ pub trait DataSource: Debug + Send + Sync {
             .collect()
     }
 }
+
+/// Represents the `FileFormat` of the underlying `DataSource`.
+#[derive(Debug, Clone, Copy)]
+pub enum FileFormat {
+    Csv,
+}

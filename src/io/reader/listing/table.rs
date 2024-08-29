@@ -4,7 +4,7 @@ use arrow_schema::SchemaRef;
 
 use crate::{
     error::Result,
-    io::{reader::csv::options::CsvFileOpenerConfig, DataSource},
+    io::{reader::csv::options::CsvFileOpenerConfig, DataSource, FileFormat},
     plan::physical::{plan::ExecutionPlan, scan::csv::CsvExec},
 };
 
@@ -13,14 +13,21 @@ pub struct ListingTable {
     name: String,
     path: String,
     schema: SchemaRef,
+    file_format: FileFormat,
 }
 
 impl ListingTable {
-    pub fn new(name: impl Into<String>, path: impl Into<String>, schema: SchemaRef) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        path: impl Into<String>,
+        schema: SchemaRef,
+        file_format: FileFormat,
+    ) -> Self {
         Self {
             name: name.into(),
             path: path.into(),
             schema,
+            file_format,
         }
     }
 
@@ -31,6 +38,10 @@ impl ListingTable {
     pub fn path(&self) -> &str {
         &self.path
     }
+
+    pub fn file_format(&self) -> FileFormat {
+        self.file_format
+    }
 }
 
 impl DataSource for ListingTable {
@@ -39,17 +50,21 @@ impl DataSource for ListingTable {
     }
 
     fn scan(&self, projection: Option<&Vec<String>>) -> Result<Arc<dyn ExecutionPlan>> {
-        let projection_idx = projection.map(|proj| {
-            proj.iter()
-                .filter_map(|name| self.schema.column_with_name(name).map(|(idx, _)| idx))
-                .collect::<Vec<_>>()
-        });
-        let config = CsvFileOpenerConfig::builder(self.schema.clone())
-            .with_projection(projection_idx)
-            .build();
-        let exec = CsvExec::new(&self.path, config);
+        match self.file_format {
+            FileFormat::Csv => {
+                let projection_idx = projection.map(|proj| {
+                    proj.iter()
+                        .filter_map(|name| self.schema.column_with_name(name).map(|(idx, _)| idx))
+                        .collect::<Vec<_>>()
+                });
+                let config = CsvFileOpenerConfig::builder(self.schema.clone())
+                    .with_projection(projection_idx)
+                    .build();
+                let exec = CsvExec::new(&self.path, config);
 
-        Ok(Arc::new(exec))
+                Ok(Arc::new(exec))
+            }
+        }
     }
 }
 
@@ -60,14 +75,19 @@ mod tests {
     use futures::StreamExt;
 
     use crate::{
-        io::{reader::listing::table::ListingTable, DataSource},
+        io::{reader::listing::table::ListingTable, DataSource, FileFormat},
         tests::create_schema,
     };
 
     #[tokio::test]
     async fn test_listing_table_scan_with_projection() {
         let schema = create_schema();
-        let table = ListingTable::new("simple", "testdata/csv/simple.csv", Arc::new(schema));
+        let table = ListingTable::new(
+            "simple",
+            "testdata/csv/simple.csv",
+            Arc::new(schema),
+            FileFormat::Csv,
+        );
         let exec = table.scan(Some(&vec!["c1".to_string()])).unwrap();
 
         let mut stream = exec.execute().unwrap();
@@ -81,7 +101,12 @@ mod tests {
     #[tokio::test]
     async fn test_listing_table_scan_no_projection() {
         let schema = create_schema();
-        let table = ListingTable::new("simple", "testdata/csv/simple.csv", Arc::new(schema));
+        let table = ListingTable::new(
+            "simple",
+            "testdata/csv/simple.csv",
+            Arc::new(schema),
+            FileFormat::Csv,
+        );
         let exec = table.scan(None).unwrap();
 
         let mut stream = exec.execute().unwrap();
