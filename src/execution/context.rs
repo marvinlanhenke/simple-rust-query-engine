@@ -10,6 +10,7 @@ use crate::{
         FileFormat,
     },
     plan::logical::{plan::LogicalPlan, scan::Scan},
+    sql::parser::WrappedParser,
 };
 
 use super::dataframe::DataFrame;
@@ -57,10 +58,12 @@ impl SessionContext {
     }
 
     /// Creates a `DataFrame` from SQL query text.
-    pub fn sql(&self, _sql: &str) -> Result<DataFrame> {
+    pub fn sql(&self, sql: &str) -> Result<DataFrame> {
         // create logical plan
         // 1. sql_to_statement
         // 2. statement_to_plan
+        let mut parser = WrappedParser::try_new(sql)?;
+        let _statement = parser.try_parse()?;
 
         // return dataframe with plan
         // Ok(DataFrame::new(plan))
