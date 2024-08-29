@@ -3,8 +3,11 @@ use std::{
     sync::{Arc, RwLock, RwLockReadGuard},
 };
 
+use snafu::location;
+use sqlparser::ast::Statement;
+
 use crate::{
-    error::Result,
+    error::{Error, Result},
     io::{
         reader::{
             csv::{options::CsvReadOptions, source::CsvDataSource},
@@ -13,7 +16,7 @@ use crate::{
         FileFormat,
     },
     plan::logical::{plan::LogicalPlan, scan::Scan},
-    sql::parser::WrappedParser,
+    sql::{parser::WrappedParser, select::query_to_plan, visitor::resolve_table_references},
 };
 
 use super::dataframe::DataFrame;
@@ -61,15 +64,40 @@ impl SessionContext {
 
     /// Creates a `DataFrame` from SQL query text.
     pub fn sql(&self, sql: &str) -> Result<DataFrame> {
-        // create logical plan
-        // 1. sql_to_statement
-        // 2. statement_to_plan
         let mut parser = WrappedParser::try_new(sql)?;
-        let _statement = parser.try_parse()?;
+        let statement = parser.try_parse()?;
 
-        // return dataframe with plan
-        // Ok(DataFrame::new(plan))
-        todo!()
+        let references = resolve_table_references(&statement)?;
+        self.validate_references(&references)?;
+
+        let plan = match statement {
+            Statement::Query(query) => query_to_plan(*query)?,
+            _ => {
+                return Err(Error::InvalidOperation {
+                    message: format!("SQL statement {} is not supported yet", statement),
+                    location: location!(),
+                })
+            }
+        };
+
+        Ok(DataFrame::new(plan))
+    }
+
+    fn validate_references(&self, references: &[String]) -> Result<()> {
+        let tables = self.tables();
+        for reference in references {
+            if !tables.contains_key(reference) {
+                return Err(Error::InvalidData {
+                    message: format!(
+                        "Table reference {} is not registered with the SessionContext",
+                        reference
+                    ),
+                    location: location!(),
+                });
+            };
+        }
+
+        Ok(())
     }
 }
 
@@ -78,6 +106,21 @@ mod tests {
     use crate::io::{reader::csv::options::CsvReadOptions, DataSource};
 
     use super::SessionContext;
+
+    #[test]
+    fn test_context_validate_references() {
+        let ctx = SessionContext::new();
+        ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let res_ok = ctx.validate_references(&["simple".to_string()]);
+        let res_err1 = ctx.validate_references(&["not_here".to_string()]);
+        let res_err2 = ctx.validate_references(&["simple".to_string(), "not_here".to_string()]);
+
+        assert!(res_ok.is_ok());
+        assert!(res_err1.is_err());
+        assert!(res_err2.is_err());
+    }
 
     #[test]
     fn test_context_register_csv() {
