@@ -6,18 +6,29 @@ use crate::{error::Result, io::DataSource, plan::physical::plan::ExecutionPlan};
 
 #[derive(Debug)]
 pub struct ListingTable {
+    name: String,
     path: String,
     schema: SchemaRef,
     source: Arc<dyn DataSource>,
 }
 
 impl ListingTable {
-    pub fn new(path: impl Into<String>, schema: SchemaRef, source: Arc<dyn DataSource>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        path: impl Into<String>,
+        schema: SchemaRef,
+        source: Arc<dyn DataSource>,
+    ) -> Self {
         Self {
+            name: name.into(),
             path: path.into(),
             schema,
             source,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn path(&self) -> &str {
@@ -34,7 +45,7 @@ impl DataSource for ListingTable {
         self.schema.clone()
     }
 
-    fn scan(&self, projection: Option<&Vec<String>>) -> Result<Arc<dyn ExecutionPlan>> {
+    fn scan(&self, _projection: Option<&Vec<String>>) -> Result<Arc<dyn ExecutionPlan>> {
         todo!()
     }
 }
