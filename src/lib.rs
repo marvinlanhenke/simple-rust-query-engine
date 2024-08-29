@@ -6,6 +6,7 @@ pub mod expression;
 pub mod io;
 pub mod optimize;
 pub mod plan;
+pub mod sql;
 pub mod utils;
 
 #[cfg(test)]

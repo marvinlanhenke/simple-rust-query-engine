@@ -34,6 +34,16 @@ pub enum Error {
         message: String,
         location: snafu::Location,
     },
+    #[snafu(display("SqlParserError: {message}, {location}"))]
+    SqlParser {
+        message: String,
+        location: snafu::Location,
+    },
+    #[snafu(display("SqlTokenizerError: {message}, {location}"))]
+    SqlTokenizer {
+        message: String,
+        location: snafu::Location,
+    },
 }
 
 trait ToSnafuLocation {
@@ -62,3 +72,5 @@ macro_rules! make_error_from {
 make_error_from!(std::io::Error, Io);
 make_error_from!(std::fmt::Error, Fmt);
 make_error_from!(arrow::error::ArrowError, Arrow);
+make_error_from!(sqlparser::tokenizer::TokenizerError, SqlTokenizer);
+make_error_from!(sqlparser::parser::ParserError, SqlParser);
