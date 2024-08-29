@@ -1,0 +1,51 @@
+use std::sync::Arc;
+
+use snafu::location;
+use sqlparser::ast::{BinaryOperator, Expr};
+
+use crate::{
+    error::{Error, Result},
+    expression::{
+        logical::{binary::Binary, column::Column, expr::Expression},
+        operator::Operator,
+    },
+};
+
+pub fn sql_expr_to_logical_expr(expr: &Expr) -> Result<Expression> {
+    match expr {
+        Expr::BinaryOp { left, op, right } => {
+            let lhs = sql_expr_to_logical_expr(left)?;
+            let rhs = sql_expr_to_logical_expr(right)?;
+            let op = parse_sql_binary_operator(op)?;
+
+            Ok(Expression::Binary(Binary::new(
+                Arc::new(lhs),
+                op,
+                Arc::new(rhs),
+            )))
+        }
+        Expr::Identifier(ident) => Ok(Expression::Column(Column::new(ident.value.clone()))),
+        _ => todo!(),
+    }
+}
+
+pub fn parse_sql_binary_operator(op: &BinaryOperator) -> Result<Operator> {
+    match op {
+        BinaryOperator::Gt => Ok(Operator::Gt),
+        BinaryOperator::GtEq => Ok(Operator::GtEq),
+        BinaryOperator::Lt => Ok(Operator::Lt),
+        BinaryOperator::LtEq => Ok(Operator::LtEq),
+        BinaryOperator::Eq => Ok(Operator::Eq),
+        BinaryOperator::NotEq => Ok(Operator::NotEq),
+        BinaryOperator::Plus => Ok(Operator::Plus),
+        BinaryOperator::Minus => Ok(Operator::Minus),
+        BinaryOperator::Multiply => Ok(Operator::Multiply),
+        BinaryOperator::Divide => Ok(Operator::Divide),
+        BinaryOperator::And => Ok(Operator::And),
+        BinaryOperator::Or => Ok(Operator::Or),
+        _ => Err(Error::InvalidOperation {
+            message: format!("SQL operator {} is not supported yet", op),
+            location: location!(),
+        }),
+    }
+}

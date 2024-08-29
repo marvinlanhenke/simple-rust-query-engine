@@ -177,6 +177,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_sql_select_with_join() {
+        let ctx = SessionContext::new();
+        ctx.register_csv("lhs", "testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap();
+        ctx.register_csv("rhs", "testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = ctx
+            .sql("SELECT * FROM lhs LEFT JOIN rhs ON c1 = c1")
+            .unwrap();
+
+        let expected = vec![
+            "+----+----+----+----+----+----+",
+            "| c1 | c2 | c3 | c1 | c2 | c3 |",
+            "+----+----+----+----+----+----+",
+            "| a  | 1  | 2  | a  | 1  | 2  |",
+            "| b  | 2  | 3  | b  | 2  | 3  |",
+            "| c  | 3  | 4  | c  | 3  | 4  |",
+            "| d  | 4  | 5  | d  | 4  | 5  |",
+            "| e  | 5  | 6  | e  | 5  | 6  |",
+            "| f  | 6  | 7  | f  | 6  | 7  |",
+            "+----+----+----+----+----+----+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_sql_select_all() {
         let ctx = SessionContext::new();
         ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
