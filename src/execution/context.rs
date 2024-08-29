@@ -71,7 +71,7 @@ impl SessionContext {
         self.validate_references(&references)?;
 
         let plan = match statement {
-            Statement::Query(query) => query_to_plan(*query)?,
+            Statement::Query(query) => query_to_plan(*query, &self.tables())?,
             _ => {
                 return Err(Error::InvalidOperation {
                     message: format!("SQL statement {} is not supported yet", statement),

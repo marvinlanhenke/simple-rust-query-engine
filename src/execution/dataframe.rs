@@ -177,6 +177,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_sql_select_all() {
+        let ctx = SessionContext::new();
+        ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = ctx.sql("SELECT * FROM simple").unwrap();
+
+        let expected = vec![
+            "+----+----+----+",
+            "| c1 | c2 | c3 |",
+            "+----+----+----+",
+            "| a  | 1  | 2  |",
+            "| b  | 2  | 3  |",
+            "| c  | 3  | 4  |",
+            "| d  | 4  | 5  |",
+            "| e  | 5  | 6  |",
+            "| f  | 6  | 7  |",
+            "+----+----+----+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_distinct() {
         let ctx = SessionContext::new();
         let df = ctx
