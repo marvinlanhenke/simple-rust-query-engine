@@ -6,10 +6,11 @@ use arrow::downcast_primitive_array;
 use arrow_array::{ArrayAccessor, ArrayRef, BooleanArray, PrimitiveArray, StringArray};
 
 use arrow_array::Array;
-use arrow_schema::DataType;
+use arrow_schema::{DataType, Schema};
 use snafu::location;
 
 use crate::error::{Error, Result};
+use crate::expression::logical::expr::Expression;
 
 /// This trait defines a method for generating a 64-bit hash value using a given `RandomState`.
 pub trait HashValue {
@@ -107,4 +108,17 @@ fn hash_primitive_array<T>(
             *hash = value.hash_one(random_state);
         }
     }
+}
+
+/// Creates a projected schema from specified expression.
+pub fn project_schema(schema: &Schema, expression: &[Expression]) -> Schema {
+    let fields = expression
+        .iter()
+        .filter_map(|expr| match expr {
+            Expression::Column(c) => schema.column_with_name(c.name()),
+            _ => None,
+        })
+        .map(|(_, f)| f.clone())
+        .collect::<Vec<_>>();
+    Schema::new(fields)
 }
