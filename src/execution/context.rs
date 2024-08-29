@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock, RwLockReadGuard},
+};
 
 use crate::{
     error::Result,
@@ -16,20 +19,22 @@ use crate::{
 use super::dataframe::DataFrame;
 
 /// Represents a [`SessionContext`] for managing query execution.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct SessionContext {
-    table: Option<ListingTable>,
+    tables: RwLock<HashMap<String, ListingTable>>,
 }
 
 impl SessionContext {
     /// Creates a new [`SessionContext`] instance.
     pub fn new() -> Self {
-        Self { table: None }
+        Self {
+            tables: RwLock::new(HashMap::new()),
+        }
     }
 
     /// Retrieves the current registered `ListingTable`.
-    pub fn table(&self) -> Option<&ListingTable> {
-        self.table.as_ref()
+    pub fn tables(&self) -> RwLockReadGuard<HashMap<String, ListingTable>> {
+        self.tables.read().unwrap()
     }
 
     /// Reads a CSV file and creates a `DataFrame`.
@@ -42,19 +47,16 @@ impl SessionContext {
     }
 
     /// Registers a CSV `ListingTable` with the current `SessionContext`.
-    pub fn register_csv(&self, name: &str, path: &str, options: CsvReadOptions) -> Result<Self> {
+    pub fn register_csv(&self, name: &str, path: &str, options: CsvReadOptions) -> Result<()> {
         let resolved_schema = match options.schema() {
             Some(schema) => schema,
             None => CsvDataSource::infer_schema(path, &options)?,
         };
-        let table = Some(ListingTable::new(
-            name,
-            path,
-            resolved_schema,
-            FileFormat::Csv,
-        ));
+        let table = ListingTable::new(name, path, resolved_schema, FileFormat::Csv);
 
-        Ok(Self { table })
+        self.tables.write().unwrap().insert(name.to_string(), table);
+
+        Ok(())
     }
 
     /// Creates a `DataFrame` from SQL query text.
@@ -80,10 +82,10 @@ mod tests {
     #[test]
     fn test_context_register_csv() {
         let ctx = SessionContext::new();
-        let ctx = ctx
-            .register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
+        ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
             .unwrap();
-        let table = ctx.table().unwrap();
+        let tables = ctx.tables();
+        let table = tables.get("simple").unwrap();
 
         assert_eq!(table.name(), "simple");
         assert_eq!(table.schema().fields().len(), 3);
