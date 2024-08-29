@@ -1,12 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use snafu::location;
-use sqlparser::ast::{Expr, ObjectName, Query, SetExpr, TableFactor, TableWithJoins};
+use sqlparser::ast::{Expr, ObjectName, Query, SelectItem, SetExpr, TableFactor, TableWithJoins};
 
 use crate::{
     error::{Error, Result},
+    expression::logical::expr_fn::col,
     io::reader::listing::table::ListingTable,
-    plan::logical::{filter::Filter, plan::LogicalPlan, scan::Scan},
+    plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
     sql::expr::sql_expr_to_logical_expr,
 };
 
@@ -16,8 +17,6 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
     let query = *query.body;
     match query {
         SetExpr::Select(select) => {
-            // process from clause
-            // process where clause
             // process select exprs
             // process projection
             // process order-by
@@ -26,6 +25,7 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
 
             let plan = plan_from_tables(select.from, tables)?;
             let plan = plan_from_selection(plan, select.selection)?;
+            let plan = plan_from_projection(plan, select.projection)?;
 
             Ok(plan)
         }
@@ -34,6 +34,36 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
             location: location!(),
         }),
     }
+}
+
+fn plan_from_projection(plan: LogicalPlan, projection: Vec<SelectItem>) -> Result<LogicalPlan> {
+    let schema = plan.schema();
+
+    let mut projected_cols = Vec::with_capacity(projection.len());
+    for proj in &projection {
+        match proj {
+            SelectItem::Wildcard(_) => {
+                for field in schema.fields() {
+                    projected_cols.push(col(field.name()));
+                }
+            }
+            SelectItem::UnnamedExpr(e) => {
+                let expr = sql_expr_to_logical_expr(e)?;
+                projected_cols.push(expr);
+            }
+            _ => {
+                return Err(Error::InvalidOperation {
+                    message: format!("SQL projection expr {} is not supported yet", proj)
+                        .to_string(),
+                    location: location!(),
+                })
+            }
+        }
+    }
+
+    let plan = LogicalPlan::Projection(Projection::new(Arc::new(plan), projected_cols));
+
+    Ok(plan)
 }
 
 fn plan_from_selection(plan: LogicalPlan, selection: Option<Expr>) -> Result<LogicalPlan> {
@@ -130,6 +160,25 @@ mod tests {
     }
 
     #[test]
+    fn test_query_to_plan_select_with_projection() {
+        let tables = create_single_table();
+        let sql = "SELECT c1, c3 FROM simple";
+        let mut parser = WrappedParser::try_new(sql).unwrap();
+        let statement = parser.try_parse().unwrap();
+
+        let result = match statement {
+            Statement::Query(query) => query_to_plan(*query, &tables).unwrap(),
+            _ => panic!(),
+        };
+
+        assert_eq!(
+            format!("{}", result),
+            "Projection: [c1, c3]\n\t\
+                Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        )
+    }
+
+    #[test]
     fn test_query_to_plan_select_with_filter() {
         let tables = create_single_table();
         let sql = "SELECT * FROM simple WHERE c1 = 'a'";
@@ -143,8 +192,9 @@ mod tests {
 
         assert_eq!(
             format!("{}", result),
-            "Filter: [c1 = a]\n\t\
-                Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+            "Projection: [c1, c2, c3]\n\t\
+                Filter: [c1 = a]\n\t\t\
+                    Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
         )
     }
 
@@ -171,9 +221,10 @@ mod tests {
 
         assert_eq!(
             format!("{}", result),
-            "Join: [type: LEFT, on: [(Column(Column { name: \"c1\" }), Column(Column { name: \"c1\" }))]]\n\t\
-                Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n\t\
-                Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+            "Projection: [c1, c2, c3, c1, c2, c3]\n\t\
+                Join: [type: LEFT, on: [(Column(Column { name: \"c1\" }), Column(Column { name: \"c1\" }))]]\n\t\t\
+                    Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n\t\t\
+                    Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
         )
     }
 
@@ -191,7 +242,8 @@ mod tests {
 
         assert_eq!(
             format!("{}", result),
-            "Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+            "Projection: [c1, c2, c3]\n\t\
+                Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
         )
     }
 }
