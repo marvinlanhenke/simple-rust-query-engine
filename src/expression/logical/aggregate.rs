@@ -1,7 +1,8 @@
 use std::{fmt::Display, sync::Arc};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use arrow::datatypes::DataType;
+use snafu::location;
 
 use super::expr::Expression;
 
@@ -41,6 +42,23 @@ impl AggregateFunction {
             AggregateFunction::Avg => Ok(DataType::Float64),
             AggregateFunction::Max => Ok(DataType::Float64),
             AggregateFunction::Min => Ok(DataType::Float64),
+        }
+    }
+}
+
+impl TryFrom<&str> for AggregateFunction {
+    type Error = Error;
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        match value.to_lowercase().as_ref() {
+            "count" => Ok(AggregateFunction::Count),
+            "sum" => Ok(AggregateFunction::Sum),
+            "avg" => Ok(AggregateFunction::Avg),
+            "max" => Ok(AggregateFunction::Max),
+            "min" => Ok(AggregateFunction::Min),
+            _ => Err(Error::InvalidOperation {
+                message: format!("Cannot create AggregationFunction from {}", value),
+                location: location!(),
+            }),
         }
     }
 }
