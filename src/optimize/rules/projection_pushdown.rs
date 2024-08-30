@@ -47,7 +47,11 @@ impl ProjectionPushDownRule {
             }
             LogicalPlan::Filter(filter) => {
                 Self::collect_columns_by_name(filter.expressions(), projected_columns);
-                let input = Self::push_down(filter.input(), projected_columns)?
+                let new_projection = LogicalPlan::Projection(Projection::new(
+                    Arc::new(filter.input().clone()),
+                    Self::create_projected_columns(projected_columns),
+                ));
+                let input = Self::push_down(&new_projection, projected_columns)?
                     .unwrap_or(filter.input().clone());
                 let new_plan = LogicalPlan::Filter(Filter::try_new(
                     Arc::new(input),
@@ -58,8 +62,12 @@ impl ProjectionPushDownRule {
             LogicalPlan::Aggregate(agg) => {
                 Self::collect_columns_by_name(agg.group_by(), projected_columns);
                 Self::collect_columns_by_name(agg.aggregate_expressions(), projected_columns);
-                let input =
-                    Self::push_down(agg.input(), projected_columns)?.unwrap_or(agg.input().clone());
+                let new_projection = LogicalPlan::Projection(Projection::new(
+                    Arc::new(agg.input().clone()),
+                    Self::create_projected_columns(projected_columns),
+                ));
+                let input = Self::push_down(&new_projection, projected_columns)?
+                    .unwrap_or(agg.input().clone());
                 let new_plan = LogicalPlan::Aggregate(Aggregate::try_new(
                     Arc::new(input),
                     agg.group_by().to_vec(),
@@ -281,6 +289,36 @@ mod tests {
 
     fn create_projection(input: Arc<LogicalPlan>, projection: Vec<Expression>) -> Arc<LogicalPlan> {
         Arc::new(LogicalPlan::Projection(Projection::new(input, projection)))
+    }
+
+    #[test]
+    fn test_projection_pushdown_with_aggregate_no_projection() {
+        let input = create_scan();
+        let input = Arc::new(LogicalPlan::Aggregate(
+            Aggregate::try_new(input, vec![col("c1"), col("c2")], vec![sum(col("c2"))]).unwrap(),
+        ));
+
+        let rule = ProjectionPushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{result}"),
+            "Aggregate: groupBy:[c1, c2]; aggrExprs:[SUM(c2)]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_projection_pushdown_with_filter_no_projection() {
+        let input = create_scan();
+        let input = Arc::new(LogicalPlan::Filter(
+            Filter::try_new(input, col("c2").lt(lit(4i64))).unwrap(),
+        ));
+
+        let rule = ProjectionPushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{result}"),
+            "Filter: [c2 < 4]\n\tScan: testdata/csv/simple.csv; projection=[\"c2\"]; filter=[[]]\n"
+        );
     }
 
     #[test]

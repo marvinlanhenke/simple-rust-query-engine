@@ -177,7 +177,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_dataframe_sql_select_with_aggregate_bug() {
+    async fn test_dataframe_sql_select_with_aggregate() {
         let ctx = SessionContext::new();
         ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
             .unwrap();
