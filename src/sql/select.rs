@@ -2,7 +2,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use snafu::location;
 use sqlparser::ast::{
-    Expr, GroupByExpr, ObjectName, Query, SelectItem, SetExpr, TableFactor, TableWithJoins,
+    Distinct as SQLDistinct, Expr, GroupByExpr, ObjectName, Query, SelectItem, SetExpr,
+    TableFactor, TableWithJoins,
 };
 
 use crate::{
@@ -10,7 +11,8 @@ use crate::{
     expression::logical::{expr::Expression, expr_fn::col},
     io::reader::listing::table::ListingTable,
     plan::logical::{
-        aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan,
+        aggregate::Aggregate, distinct::Distinct, filter::Filter, plan::LogicalPlan,
+        projection::Projection, scan::Scan,
     },
     sql::expr::sql_expr_to_logical_expr,
 };
@@ -22,13 +24,13 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
     match query {
         SetExpr::Select(select) => {
             // TODO:
-            // process group-by // aggregates
             // process distinct
             // process order-by
             // process limit
 
             let plan = plan_from_tables(select.from, tables)?;
             let plan = plan_from_selection(plan, select.selection)?;
+            let plan = plan_from_distinct(plan, select.distinct.as_ref())?;
             let plan = plan_from_aggregation(plan, &select.projection, select.group_by)?;
             let plan = plan_from_projection(plan, &select.projection)?;
 
@@ -38,6 +40,19 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
             message: "Only select statements are supported".to_string(),
             location: location!(),
         }),
+    }
+}
+
+fn plan_from_distinct(plan: LogicalPlan, distinct: Option<&SQLDistinct>) -> Result<LogicalPlan> {
+    match distinct {
+        None => Ok(plan),
+        Some(dist) => match dist {
+            SQLDistinct::Distinct => Ok(LogicalPlan::Distinct(Distinct::new(Arc::new(plan)))),
+            SQLDistinct::On(_) => Err(Error::InvalidOperation {
+                message: "SQL distinct on is not supported yet".to_string(),
+                location: location!(),
+            }),
+        },
     }
 }
 
@@ -199,6 +214,26 @@ mod tests {
             FileFormat::Csv,
         );
         HashMap::from([("simple".to_string(), listing_table)])
+    }
+
+    #[test]
+    fn test_query_to_plan_select_with_distinct() {
+        let tables = create_single_table();
+        let sql = "SELECT DISTINCT c1 FROM simple";
+        let mut parser = WrappedParser::try_new(sql).unwrap();
+        let statement = parser.try_parse().unwrap();
+
+        let result = match statement {
+            Statement::Query(query) => query_to_plan(*query, &tables).unwrap(),
+            _ => panic!(),
+        };
+
+        assert_eq!(
+            format!("{}", result),
+            "Distinct\n\t\
+                Projection: [c1]\n\t\t\
+                    Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        )
     }
 
     #[test]

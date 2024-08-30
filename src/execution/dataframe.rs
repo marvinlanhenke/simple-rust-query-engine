@@ -50,6 +50,7 @@ impl DataFrame {
     /// Collects the results of the query execution as `RecordBatch`'es.
     pub async fn collect(&self) -> Result<Vec<RecordBatch>> {
         let optimized = self.optimizer.optimize(&self.plan)?;
+        println!("{optimized}");
         let physical_plan = Planner::create_physical_plan(&optimized)?;
         let stream = physical_plan.execute()?;
 
@@ -174,6 +175,21 @@ mod tests {
         let results = pretty::pretty_format_batches(&results).unwrap().to_string();
         let results = results.trim().lines().collect::<Vec<_>>();
         assert_eq!(results, expected);
+    }
+
+    #[tokio::test]
+    async fn test_dataframe_sql_select_with_distinct() {
+        let ctx = SessionContext::new();
+        ctx.register_csv("simple", "testdata/csv/distinct.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = ctx.sql("SELECT DISTINCT c1 FROM simple").unwrap();
+
+        let expected = vec![
+            "+----+", "| c1 |", "+----+", "| a  |", "| c  |", "| d  |", "| f  |", "| b  |",
+            "+----+",
+        ];
+        assert_df_results(&df, expected).await;
     }
 
     #[tokio::test]
