@@ -1,6 +1,7 @@
-use std::{any::Any, fmt::Display};
+use std::{any::Any, fmt::Display, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
+use arrow_schema::Schema;
 
 use crate::{
     error::Result,
@@ -44,7 +45,16 @@ impl ExecutionPlan for CsvExec {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.config.schema()
+        match self.config.projection() {
+            None => self.config.schema(),
+            Some(proj) => {
+                let fields = proj
+                    .iter()
+                    .map(|idx| self.config.schema().field(*idx).clone())
+                    .collect::<Vec<_>>();
+                Arc::new(Schema::new(fields))
+            }
+        }
     }
 
     fn children(&self) -> Vec<&dyn ExecutionPlan> {
