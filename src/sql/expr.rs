@@ -1,12 +1,20 @@
 use std::sync::Arc;
 
 use snafu::location;
-use sqlparser::ast::{BinaryOperator, Expr, Value};
+use sqlparser::ast::{
+    BinaryOperator, Expr, FunctionArg, FunctionArgExpr, FunctionArguments, ObjectName, Value,
+};
 
 use crate::{
     error::{Error, Result},
     expression::{
-        logical::{binary::Binary, column::Column, expr::Expression, expr_fn::lit},
+        logical::{
+            aggregate::{Aggregate, AggregateFunction},
+            binary::Binary,
+            column::Column,
+            expr::Expression,
+            expr_fn::lit,
+        },
         operator::Operator,
         values::ScalarValue,
     },
@@ -53,6 +61,61 @@ pub fn sql_expr_to_logical_expr(expr: &Expr) -> Result<Expression> {
                 location: location!(),
             }),
         },
+        Expr::Function(sql_func) => {
+            let ObjectName(ident) = sql_func.name.clone();
+            let func = match ident.len() {
+                1 => AggregateFunction::try_from(ident[0].value.as_ref())?,
+                _ => {
+                    return Err(Error::InvalidOperation {
+                        message: "SQL function expression expects 1 ident".to_string(),
+                        location: location!(),
+                    })
+                }
+            };
+
+            let expression = match &sql_func.args {
+                FunctionArguments::List(list) => {
+                    let func_arg = list.args[0].clone();
+                    match func_arg {
+                        FunctionArg::Unnamed(fe) => match fe {
+                            FunctionArgExpr::Expr(e) => sql_expr_to_logical_expr(&e)?,
+                            _ => {
+                                return Err(Error::InvalidOperation {
+                                    message: format!(
+                                        "SQL function argument {} is not supported yet",
+                                        fe
+                                    ),
+                                    location: location!(),
+                                })
+                            }
+                        },
+                        _ => {
+                            return Err(Error::InvalidOperation {
+                                message: format!(
+                                    "SQL function argument {} is not supported yet",
+                                    func_arg
+                                ),
+                                location: location!(),
+                            })
+                        }
+                    }
+                }
+                _ => {
+                    return Err(Error::InvalidOperation {
+                        message: format!(
+                            "SQL function argument {} is not supported yet",
+                            sql_func.args
+                        ),
+                        location: location!(),
+                    })
+                }
+            };
+
+            Ok(Expression::Aggregate(Aggregate::new(
+                func,
+                Arc::new(expression),
+            )))
+        }
         _ => Err(Error::InvalidOperation {
             message: format!("SQL expression {} is not supported yet", expr),
             location: location!(),

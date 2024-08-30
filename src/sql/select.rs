@@ -1,13 +1,17 @@
 use std::{collections::HashMap, sync::Arc};
 
 use snafu::location;
-use sqlparser::ast::{Expr, ObjectName, Query, SelectItem, SetExpr, TableFactor, TableWithJoins};
+use sqlparser::ast::{
+    Expr, GroupByExpr, ObjectName, Query, SelectItem, SetExpr, TableFactor, TableWithJoins,
+};
 
 use crate::{
     error::{Error, Result},
-    expression::logical::expr_fn::col,
+    expression::logical::{expr::Expression, expr_fn::col},
     io::reader::listing::table::ListingTable,
-    plan::logical::{filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan},
+    plan::logical::{
+        aggregate::Aggregate, filter::Filter, plan::LogicalPlan, projection::Projection, scan::Scan,
+    },
     sql::expr::sql_expr_to_logical_expr,
 };
 
@@ -17,15 +21,16 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
     let query = *query.body;
     match query {
         SetExpr::Select(select) => {
-            // process select exprs
-            // process projection
+            // TODO:
+            // process group-by // aggregates
+            // process distinct
             // process order-by
-            // process disctinct
-            // apply limit
+            // process limit
 
             let plan = plan_from_tables(select.from, tables)?;
             let plan = plan_from_selection(plan, select.selection)?;
-            let plan = plan_from_projection(plan, select.projection)?;
+            let plan = plan_from_aggregation(plan, &select.projection, select.group_by)?;
+            let plan = plan_from_projection(plan, &select.projection)?;
 
             Ok(plan)
         }
@@ -36,11 +41,46 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
     }
 }
 
-fn plan_from_projection(plan: LogicalPlan, projection: Vec<SelectItem>) -> Result<LogicalPlan> {
+fn plan_from_aggregation(
+    plan: LogicalPlan,
+    projection: &[SelectItem],
+    sql_group_by: GroupByExpr,
+) -> Result<LogicalPlan> {
+    let mut group_by = vec![];
+    if let GroupByExpr::Expressions(exprs, _) = &sql_group_by {
+        for expr in exprs {
+            group_by.push(sql_expr_to_logical_expr(expr)?);
+        }
+    }
+
+    let mut aggregate_expressions = vec![];
+    for proj in projection {
+        if let SelectItem::UnnamedExpr(e) = proj {
+            let expr = sql_expr_to_logical_expr(e)?;
+            if let Expression::Aggregate(_) = &expr {
+                aggregate_expressions.push(expr);
+            }
+        }
+    }
+
+    if group_by.is_empty() && aggregate_expressions.is_empty() {
+        return Ok(plan);
+    }
+
+    let plan = LogicalPlan::Aggregate(Aggregate::try_new(
+        Arc::new(plan),
+        group_by,
+        aggregate_expressions,
+    )?);
+
+    Ok(plan)
+}
+
+fn plan_from_projection(plan: LogicalPlan, projection: &[SelectItem]) -> Result<LogicalPlan> {
     let schema = plan.schema();
 
     let mut projected_cols = Vec::with_capacity(projection.len());
-    for proj in &projection {
+    for proj in projection {
         match proj {
             SelectItem::Wildcard(_) => {
                 for field in schema.fields() {
@@ -49,7 +89,9 @@ fn plan_from_projection(plan: LogicalPlan, projection: Vec<SelectItem>) -> Resul
             }
             SelectItem::UnnamedExpr(e) => {
                 let expr = sql_expr_to_logical_expr(e)?;
-                projected_cols.push(expr);
+                if let Expression::Column(_) = expr {
+                    projected_cols.push(expr);
+                }
             }
             _ => {
                 return Err(Error::InvalidOperation {
@@ -157,6 +199,26 @@ mod tests {
             FileFormat::Csv,
         );
         HashMap::from([("simple".to_string(), listing_table)])
+    }
+
+    #[test]
+    fn test_query_to_plan_select_with_aggregation() {
+        let tables = create_single_table();
+        let sql = "SELECT c1, SUM(c2), MIN(c3) FROM simple GROUP BY c1";
+        let mut parser = WrappedParser::try_new(sql).unwrap();
+        let statement = parser.try_parse().unwrap();
+
+        let result = match statement {
+            Statement::Query(query) => query_to_plan(*query, &tables).unwrap(),
+            _ => panic!(),
+        };
+
+        assert_eq!(
+            format!("{}", result),
+            "Projection: [c1]\n\t\
+                Aggregate: groupBy:[c1]; aggrExprs:[SUM(c2), MIN(c3)]\n\t\t\
+                    Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        )
     }
 
     #[test]
