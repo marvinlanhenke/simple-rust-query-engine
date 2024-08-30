@@ -177,6 +177,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_sql_select_with_limit() {
+        let ctx = SessionContext::new();
+        ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = ctx
+            .sql("SELECT c1, c2 FROM simple ORDER BY c2 DESC LIMIT 2")
+            .unwrap();
+
+        let expected = vec![
+            "+----+----+",
+            "| c1 | c2 |",
+            "+----+----+",
+            "| f  | 6  |",
+            "| e  | 5  |",
+            "+----+----+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_sql_select_with_order_by() {
         let ctx = SessionContext::new();
         ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())

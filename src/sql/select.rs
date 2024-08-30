@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use arrow_array::{Datum, Int64Array};
 use snafu::location;
 use sqlparser::ast::{
     Distinct as SQLDistinct, Expr, GroupByExpr, ObjectName, OrderBy, Query, SelectItem, SetExpr,
@@ -14,7 +15,7 @@ use crate::{
     },
     io::reader::listing::table::ListingTable,
     plan::logical::{
-        aggregate::Aggregate, distinct::Distinct, filter::Filter, plan::LogicalPlan,
+        aggregate::Aggregate, distinct::Distinct, filter::Filter, limit::Limit, plan::LogicalPlan,
         projection::Projection, scan::Scan, sort::Sort,
     },
     sql::expr::sql_expr_to_logical_expr,
@@ -39,12 +40,33 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
             })
         }
     };
-    // TODO:
-    // process order-by
-    // process limit
     let plan = plan_from_order_by(plan, query.order_by)?;
+    let plan = plan_from_limit(plan, query.limit)?;
 
     Ok(plan)
+}
+
+fn plan_from_limit(plan: LogicalPlan, limit: Option<Expr>) -> Result<LogicalPlan> {
+    match limit {
+        None => Ok(plan),
+        Some(e) => {
+            let limit_expr = sql_expr_to_logical_expr(&e)?;
+            let fetch = if let Expression::Literal(lit) = limit_expr {
+                let scalar = lit.to_scalar()?;
+                let (arr, _) = scalar.get();
+                let arr = arr
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .expect("failed to downcast array");
+                let n = arr.value(0);
+                Some(n as usize)
+            } else {
+                None
+            };
+
+            Ok(LogicalPlan::Limit(Limit::new(Arc::new(plan), 0, fetch)))
+        }
+    }
 }
 
 fn plan_from_order_by(plan: LogicalPlan, order_by: Option<OrderBy>) -> Result<LogicalPlan> {
@@ -236,6 +258,26 @@ mod tests {
             FileFormat::Csv,
         );
         HashMap::from([("simple".to_string(), listing_table)])
+    }
+
+    #[test]
+    fn test_query_to_plan_select_with_limit() {
+        let tables = create_single_table();
+        let sql = "SELECT c1, c2 FROM simple LIMIT 5";
+        let mut parser = WrappedParser::try_new(sql).unwrap();
+        let statement = parser.try_parse().unwrap();
+
+        let result = match statement {
+            Statement::Query(query) => query_to_plan(*query, &tables).unwrap(),
+            _ => panic!(),
+        };
+
+        assert_eq!(
+            format!("{}", result),
+            "Limit: [skip: 0, fetch:Some(5)]\n\t\
+                Projection: [c1, c2]\n\t\t\
+                    Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        )
     }
 
     #[test]
