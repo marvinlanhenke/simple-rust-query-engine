@@ -2,17 +2,20 @@ use std::{collections::HashMap, sync::Arc};
 
 use snafu::location;
 use sqlparser::ast::{
-    Distinct as SQLDistinct, Expr, GroupByExpr, ObjectName, Query, SelectItem, SetExpr,
+    Distinct as SQLDistinct, Expr, GroupByExpr, ObjectName, OrderBy, Query, SelectItem, SetExpr,
     TableFactor, TableWithJoins,
 };
 
 use crate::{
     error::{Error, Result},
-    expression::logical::{expr::Expression, expr_fn::col},
+    expression::logical::{
+        expr::Expression,
+        expr_fn::{col, sort},
+    },
     io::reader::listing::table::ListingTable,
     plan::logical::{
         aggregate::Aggregate, distinct::Distinct, filter::Filter, plan::LogicalPlan,
-        projection::Projection, scan::Scan,
+        projection::Projection, scan::Scan, sort::Sort,
     },
     sql::expr::sql_expr_to_logical_expr,
 };
@@ -20,26 +23,45 @@ use crate::{
 use super::join::parse_join_relation;
 
 pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Result<LogicalPlan> {
-    let query = *query.body;
-    match query {
+    let body = *query.body;
+    let plan = match body {
         SetExpr::Select(select) => {
-            // TODO:
-            // process distinct
-            // process order-by
-            // process limit
-
             let plan = plan_from_tables(select.from, tables)?;
             let plan = plan_from_selection(plan, select.selection)?;
             let plan = plan_from_distinct(plan, select.distinct.as_ref())?;
             let plan = plan_from_aggregation(plan, &select.projection, select.group_by)?;
-            let plan = plan_from_projection(plan, &select.projection)?;
-
-            Ok(plan)
+            plan_from_projection(plan, &select.projection)?
         }
-        _ => Err(Error::InvalidOperation {
-            message: "Only select statements are supported".to_string(),
-            location: location!(),
-        }),
+        _ => {
+            return Err(Error::InvalidOperation {
+                message: "Only select statements are supported".to_string(),
+                location: location!(),
+            })
+        }
+    };
+    // TODO:
+    // process order-by
+    // process limit
+    let plan = plan_from_order_by(plan, query.order_by)?;
+
+    Ok(plan)
+}
+
+fn plan_from_order_by(plan: LogicalPlan, order_by: Option<OrderBy>) -> Result<LogicalPlan> {
+    match order_by {
+        None => Ok(plan),
+        Some(OrderBy { exprs, .. }) => {
+            let mut expression = Vec::with_capacity(exprs.len());
+            for expr in &exprs {
+                let sort_col = sql_expr_to_logical_expr(&expr.expr)?;
+                if let Expression::Column(_) = sort_col {
+                    let ascending = expr.asc.unwrap_or(true);
+                    expression.push(sort(sort_col, ascending));
+                }
+            }
+
+            Ok(LogicalPlan::Sort(Sort::new(Arc::new(plan), expression)))
+        }
     }
 }
 
@@ -214,6 +236,26 @@ mod tests {
             FileFormat::Csv,
         );
         HashMap::from([("simple".to_string(), listing_table)])
+    }
+
+    #[test]
+    fn test_query_to_plan_select_with_order_by() {
+        let tables = create_single_table();
+        let sql = "SELECT c1, c2 FROM simple ORDER BY c2, c1";
+        let mut parser = WrappedParser::try_new(sql).unwrap();
+        let statement = parser.try_parse().unwrap();
+
+        let result = match statement {
+            Statement::Query(query) => query_to_plan(*query, &tables).unwrap(),
+            _ => panic!(),
+        };
+
+        assert_eq!(
+            format!("{}", result),
+            "Sort: [Sort[c2], Sort[c1]]\n\t\
+                Projection: [c1, c2]\n\t\t\
+                    Scan: testdata/csv/simple.csv; projection=None; filter=[[]]\n"
+        )
     }
 
     #[test]

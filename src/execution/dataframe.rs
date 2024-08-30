@@ -50,7 +50,6 @@ impl DataFrame {
     /// Collects the results of the query execution as `RecordBatch`'es.
     pub async fn collect(&self) -> Result<Vec<RecordBatch>> {
         let optimized = self.optimizer.optimize(&self.plan)?;
-        println!("{optimized}");
         let physical_plan = Planner::create_physical_plan(&optimized)?;
         let stream = physical_plan.execute()?;
 
@@ -175,6 +174,31 @@ mod tests {
         let results = pretty::pretty_format_batches(&results).unwrap().to_string();
         let results = results.trim().lines().collect::<Vec<_>>();
         assert_eq!(results, expected);
+    }
+
+    #[tokio::test]
+    async fn test_dataframe_sql_select_with_order_by() {
+        let ctx = SessionContext::new();
+        ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = ctx
+            .sql("SELECT c1, c2 FROM simple ORDER BY c2 DESC")
+            .unwrap();
+
+        let expected = vec![
+            "+----+----+",
+            "| c1 | c2 |",
+            "+----+----+",
+            "| f  | 6  |",
+            "| e  | 5  |",
+            "| d  | 4  |",
+            "| c  | 3  |",
+            "| b  | 2  |",
+            "| a  | 1  |",
+            "+----+----+",
+        ];
+        assert_df_results(&df, expected).await;
     }
 
     #[tokio::test]
