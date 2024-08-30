@@ -83,6 +83,7 @@ impl SessionContext {
         Ok(DataFrame::new(plan))
     }
 
+    /// Checks if referenced table from sql query are registered as tables.
     fn validate_references(&self, references: &[String]) -> Result<()> {
         let tables = self.tables();
         for reference in references {
