@@ -1,6 +1,7 @@
 use std::{fmt::Display, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
+use arrow_schema::Schema;
 
 use crate::{expression::logical::expr::Expression, io::DataSource};
 
@@ -17,6 +18,8 @@ pub struct Scan {
     projection: Option<Vec<String>>,
     /// A list of filter expressions to apply.
     filter: Vec<Expression>,
+    /// The schema after projection has been applied.
+    schema: SchemaRef,
 }
 
 impl Scan {
@@ -27,11 +30,28 @@ impl Scan {
         projection: Option<Vec<String>>,
         filter: Vec<Expression>,
     ) -> Self {
+        let schema = match &projection {
+            None => source.schema(),
+            Some(proj) => {
+                let fields = proj
+                    .iter()
+                    .filter_map(|name| {
+                        source
+                            .schema()
+                            .column_with_name(name)
+                            .map(|(_, f)| f.clone())
+                    })
+                    .collect::<Vec<_>>();
+                Arc::new(Schema::new(fields))
+            }
+        };
+
         Self {
             path: path.into(),
             source,
             projection,
             filter,
+            schema,
         }
     }
 
@@ -52,7 +72,7 @@ impl Scan {
 
     /// A reference-counted [`arrow::datatypes::Schema`] of the data source.
     pub fn schema(&self) -> SchemaRef {
-        self.source.schema()
+        self.schema.clone()
     }
 
     /// Retrieves the child logical plans.

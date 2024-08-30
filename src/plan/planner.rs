@@ -43,7 +43,7 @@ use super::{logical::aggregate::Aggregate, physical::plan::ExecutionPlan};
 
 macro_rules! make_aggregate_expr {
     ($e:expr, $plan:expr, $ty:ident) => {{
-        let data_type = $e.data_type(&$plan.schema())?;
+        let data_type = $e.data_type(&$plan.input().schema())?;
         Arc::new($ty::new($e, data_type))
     }};
 }

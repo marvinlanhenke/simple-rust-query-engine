@@ -14,6 +14,7 @@ pub fn collect_columns(expr: &Expression, columns: &mut HashSet<Column>) {
             collect_columns(e.lhs(), columns);
             collect_columns(e.rhs(), columns);
         }
+        Aggregate(e) => collect_columns(e.expression(), columns),
         _ => {}
     }
 }

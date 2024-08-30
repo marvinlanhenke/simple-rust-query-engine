@@ -257,7 +257,7 @@ mod tests {
     use crate::{
         expression::logical::{
             expr::Expression,
-            expr_fn::{col, lit, sum},
+            expr_fn::{col, count, lit, sum},
         },
         io::reader::csv::{options::CsvReadOptions, source::CsvDataSource},
         optimize::rules::{projection_pushdown::ProjectionPushDownRule, OptimizerRule},
@@ -298,6 +298,22 @@ mod tests {
         assert_eq!(
             format!("{result}"),
             "Join: [type: LEFT, on: [(Column(Column { name: \"c1\" }), Column(Column { name: \"c1\" }))]]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n"
+        );
+    }
+
+    #[test]
+    fn test_projection_pushdown_with_aggregate_nested() {
+        let input = create_scan();
+        let input = create_projection(input, vec![col("c1")]);
+        let input = Arc::new(LogicalPlan::Aggregate(
+            Aggregate::try_new(input, vec![col("c1")], vec![count(col("c2"))]).unwrap(),
+        ));
+
+        let rule = ProjectionPushDownRule::new();
+        let result = rule.try_optimize(&input).unwrap().unwrap();
+        assert_eq!(
+            format!("{result}"),
+            "Aggregate: groupBy:[c1]; aggrExprs:[COUNT(c2)]\n\tScan: testdata/csv/simple.csv; projection=[\"c1\", \"c2\"]; filter=[[]]\n"
         );
     }
 

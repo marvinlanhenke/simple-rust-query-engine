@@ -177,6 +177,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dataframe_sql_select_with_aggregate_bug() {
+        let ctx = SessionContext::new();
+        ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
+            .unwrap();
+
+        let df = ctx
+            .sql("SELECT c1, SUM(c3), MIN(c2) FROM simple GROUP BY c1")
+            .unwrap();
+
+        let expected = vec![
+            "+----+---------+---------+",
+            "| c1 | SUM(c3) | MIN(c2) |",
+            "+----+---------+---------+",
+            "| a  | 2       | 1       |",
+            "| b  | 3       | 2       |",
+            "| c  | 4       | 3       |",
+            "| d  | 5       | 4       |",
+            "| e  | 6       | 5       |",
+            "| f  | 7       | 6       |",
+            "+----+---------+---------+",
+        ];
+        assert_df_results(&df, expected).await;
+    }
+
+    #[tokio::test]
     async fn test_dataframe_sql_select_with_projection() {
         let ctx = SessionContext::new();
         ctx.register_csv("simple", "testdata/csv/simple.csv", CsvReadOptions::new())
