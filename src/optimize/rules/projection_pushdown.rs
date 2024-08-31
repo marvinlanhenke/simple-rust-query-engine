@@ -11,14 +11,19 @@ use crate::{
 
 use super::{utils::collect_columns, OptimizerRule, RecursionState};
 
+/// A rule that pushes down projection operations in a logical query plan to minimize
+/// the amount of data processed in subsequent operations.
 #[derive(Debug, Default)]
 pub struct ProjectionPushDownRule;
 
 impl ProjectionPushDownRule {
+    /// Creates a new `ProjectionPushDownRule`.
     pub fn new() -> Self {
         Self {}
     }
 
+    /// Recursively pushes down projection operations within the given logical plan,
+    /// adjusting the projected columns as needed.
     fn push_down(
         plan: &LogicalPlan,
         projected_columns: &mut Vec<String>,
@@ -102,6 +107,7 @@ impl ProjectionPushDownRule {
         Ok(new_plan)
     }
 
+    /// Implements the logic for pushing down projections within a `Projection` node.
     fn push_down_impl(
         projection: &Projection,
         columns: &mut Vec<String>,
@@ -227,6 +233,8 @@ impl ProjectionPushDownRule {
         Ok(new_plan)
     }
 
+    /// Collects column names referenced by the provided expressions
+    /// and appends them to the `columns` vector.
     fn collect_columns_by_name(exprs: &[Expression], columns: &mut Vec<String>) {
         let mut referenced_columns = HashSet::new();
         for expr in exprs {
@@ -239,6 +247,7 @@ impl ProjectionPushDownRule {
         columns.extend(columns_by_name);
     }
 
+    /// Creates a vector of `Expression::Column` from a slice of column names.
     fn create_projected_columns(columns: &[String]) -> Vec<Expression> {
         columns
             .iter()
