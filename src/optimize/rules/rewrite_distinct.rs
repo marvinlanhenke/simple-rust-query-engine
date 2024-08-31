@@ -13,14 +13,19 @@ use crate::{
 
 use super::OptimizerRule;
 
+/// A rule that rewrites logical plans containing a `Distinct` operation by converting it
+/// into an `Aggregate` operation with grouping by all columns.
 #[derive(Debug, Default)]
 pub struct RewriteDistinctRule;
 
 impl RewriteDistinctRule {
+    /// Creates a new `RewriteDistinctRule`.
     pub fn new() -> Self {
         Self {}
     }
 
+    /// Recursively rewrites the logical plan by replacing `Distinct` operations with equivalent
+    /// `Aggregate` operations. The rewrite is applied to the entire plan tree.
     fn rewrite(plan: &LogicalPlan) -> Result<Option<LogicalPlan>> {
         let new_plan = match plan {
             LogicalPlan::Distinct(dist) => {
