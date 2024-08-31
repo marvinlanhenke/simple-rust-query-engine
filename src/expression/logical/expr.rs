@@ -68,6 +68,13 @@ impl Expression {
         }
     }
 
+    /// Attempts to cast the current expression to a specified data type.
+    ///
+    /// This function checks if the expression's current data type matches the desired `to_type`.
+    /// If the types match, it returns the expression unchanged. If they differ, it attempts to cast
+    /// the expression to the new type. Currently, only literal expressions are supported for casting.
+    /// For literals, the function uses `cast_with_options` to perform the cast and returns a new
+    /// literal expression with the cast result.
     pub fn cast_to(&self, to_type: &DataType, schema: &Schema) -> Result<Expression> {
         use Expression::*;
 
@@ -91,6 +98,10 @@ impl Expression {
         }
     }
 
+    /// Generates a display name for an expression by writing it to the provided writer.
+    ///
+    /// This function traverses the expression tree and writes a human-readable representation
+    /// of the expression to the given writer.
     fn display_name_impl<W: Write>(w: &mut W, expr: &Expression) -> Result<()> {
         use Expression::*;
 

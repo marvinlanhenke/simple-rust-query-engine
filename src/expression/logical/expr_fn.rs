@@ -48,6 +48,7 @@ pub trait LiteralExt {
     fn lit(&self) -> Expression;
 }
 
+/// A macro to implement `LiteralExt` on primitives.
 macro_rules! make_lit {
     ($ty:ident, $scalar:ident) => {
         impl LiteralExt for $ty {

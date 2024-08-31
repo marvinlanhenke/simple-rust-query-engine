@@ -96,6 +96,11 @@ impl Signature {
         Self::try_new(lhs, op, rhs).map(|sig| (sig.lhs, sig.rhs))
     }
 
+    /// Determines the appropriate data type for comparison operations between two data types.
+    ///
+    /// This function first checks if the two data types are the same, in which case the result is simply
+    /// the type of the operands. If the types differ, it attempts to coerce the types using the rules
+    /// defined in `binary_numeric_coercion`.
     fn comparision_coercion(lhs: &DataType, rhs: &DataType) -> Option<DataType> {
         if lhs == rhs {
             return Some(lhs.clone());
@@ -104,6 +109,11 @@ impl Signature {
         Self::binary_numeric_coercion(lhs, rhs)
     }
 
+    /// Determines the appropriate data type for binary numeric operations between two numeric types.
+    ///
+    /// This function applies specific coercion rules to determine the result type of an operation
+    /// between two numeric types. The coercion is based on the wider of the two types, or the type
+    /// that can encompass both values without loss of precision or range.
     fn binary_numeric_coercion(lhs: &DataType, rhs: &DataType) -> Option<DataType> {
         use DataType::*;
 

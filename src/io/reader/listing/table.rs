@@ -8,6 +8,8 @@ use crate::{
     plan::physical::{plan::ExecutionPlan, scan::csv::CsvExec},
 };
 
+/// Represents a table that is loaded from a file, such as a CSV file.
+/// It holds the name, file path, schema, and file format information of the table.
 #[derive(Debug, Clone)]
 pub struct ListingTable {
     name: String,
@@ -17,6 +19,7 @@ pub struct ListingTable {
 }
 
 impl ListingTable {
+    /// Creates a new `ListingTable` instance.
     pub fn new(
         name: impl Into<String>,
         path: impl Into<String>,
@@ -31,14 +34,17 @@ impl ListingTable {
         }
     }
 
+    /// Returns the name of the table.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Returns the file path of the table.
     pub fn path(&self) -> &str {
         &self.path
     }
 
+    /// Returns the file format of the table.
     pub fn file_format(&self) -> FileFormat {
         self.file_format
     }
