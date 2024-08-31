@@ -5,11 +5,14 @@ use crate::error::{Error, Result};
 use snafu::location;
 use sqlparser::ast::{ObjectName, Statement, Visit, Visitor};
 
+/// A visitor that traverses SQL statements to collect referenced table names.
 struct RelationVisitor {
+    /// A set of unique table names found in the SQL statement.
     relations: BTreeSet<ObjectName>,
 }
 
 impl RelationVisitor {
+    /// Inserts a table name into the set of relations if it is not already present.
     fn insert_relation(&mut self, relation: &ObjectName) {
         if !self.relations.contains(relation) {
             self.relations.insert(relation.clone());
@@ -26,6 +29,7 @@ impl Visitor for RelationVisitor {
     }
 }
 
+/// Resolves and returns a list of table references from a SQL statement.
 pub fn resolve_table_references(statement: &Statement) -> Result<Vec<String>> {
     let mut visitor = RelationVisitor {
         relations: BTreeSet::new(),

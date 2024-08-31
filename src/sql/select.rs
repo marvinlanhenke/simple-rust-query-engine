@@ -23,6 +23,7 @@ use crate::{
 
 use super::join::parse_join_relation;
 
+/// Converts a SQL `Query` to a `LogicalPlan`.
 pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Result<LogicalPlan> {
     let body = *query.body;
     let plan = match body {
@@ -46,6 +47,7 @@ pub fn query_to_plan(query: Query, tables: &HashMap<String, ListingTable>) -> Re
     Ok(plan)
 }
 
+/// Processes the `LIMIT` clause of a SQL query to generate a `LogicalPlan` with the `Limit` node.
 fn plan_from_limit(plan: LogicalPlan, limit: Option<Expr>) -> Result<LogicalPlan> {
     match limit {
         None => Ok(plan),
@@ -69,6 +71,7 @@ fn plan_from_limit(plan: LogicalPlan, limit: Option<Expr>) -> Result<LogicalPlan
     }
 }
 
+/// Processes the `ORDER BY` clause of a SQL query to generate a `LogicalPlan` with the `Sort` node.
 fn plan_from_order_by(plan: LogicalPlan, order_by: Option<OrderBy>) -> Result<LogicalPlan> {
     match order_by {
         None => Ok(plan),
@@ -87,6 +90,7 @@ fn plan_from_order_by(plan: LogicalPlan, order_by: Option<OrderBy>) -> Result<Lo
     }
 }
 
+/// Processes the `DISTINCT` clause of a SQL query to generate a `LogicalPlan` with the `Distinct` node.
 fn plan_from_distinct(plan: LogicalPlan, distinct: Option<&SQLDistinct>) -> Result<LogicalPlan> {
     match distinct {
         None => Ok(plan),
@@ -100,6 +104,8 @@ fn plan_from_distinct(plan: LogicalPlan, distinct: Option<&SQLDistinct>) -> Resu
     }
 }
 
+/// Processes the `GROUP BY` and aggregation functions in a SQL query
+/// to generate a `LogicalPlan` with the `Aggregate` node.
 fn plan_from_aggregation(
     plan: LogicalPlan,
     projection: &[SelectItem],
@@ -135,6 +141,7 @@ fn plan_from_aggregation(
     Ok(plan)
 }
 
+/// Processes the projection list in a SQL query to generate a `LogicalPlan` with the `Projection` node.
 fn plan_from_projection(plan: LogicalPlan, projection: &[SelectItem]) -> Result<LogicalPlan> {
     let schema = plan.schema();
 
@@ -167,6 +174,7 @@ fn plan_from_projection(plan: LogicalPlan, projection: &[SelectItem]) -> Result<
     Ok(plan)
 }
 
+/// Processes the `WHERE` clause of a SQL query to generate a `LogicalPlan` with the `Filter` node.
 fn plan_from_selection(plan: LogicalPlan, selection: Option<Expr>) -> Result<LogicalPlan> {
     match selection {
         Some(expr) => {
@@ -179,6 +187,7 @@ fn plan_from_selection(plan: LogicalPlan, selection: Option<Expr>) -> Result<Log
     }
 }
 
+/// Processes the `FROM` clause of a SQL query to generate a `LogicalPlan` from the listed tables and joins.
 fn plan_from_tables(
     mut from: Vec<TableWithJoins>,
     tables: &HashMap<String, ListingTable>,
@@ -202,6 +211,7 @@ fn plan_from_tables(
     }
 }
 
+/// Creates a `LogicalPlan` from a table relation in the SQL `FROM` clause.
 pub fn create_relation(
     relation: TableFactor,
     tables: &HashMap<String, ListingTable>,

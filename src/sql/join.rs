@@ -15,6 +15,7 @@ use crate::{
 
 use super::{expr::sql_expr_to_logical_expr, select::create_relation};
 
+/// Parses an SQL `JOIN` clause and converts it into a logical join operation (`LogicalPlan`).
 pub fn parse_join_relation(
     lhs: LogicalPlan,
     join: SQLJoin,
@@ -31,6 +32,7 @@ pub fn parse_join_relation(
     }
 }
 
+/// Parses the join constraint and constructs a logical join operation (`LogicalPlan`).
 pub fn parse_join(
     lhs: LogicalPlan,
     rhs: LogicalPlan,

@@ -20,6 +20,7 @@ use crate::{
     },
 };
 
+/// Converts an SQL expression (`Expr`) from the SQL parser AST into a logical expression (`Expression`).
 pub fn sql_expr_to_logical_expr(expr: &Expr) -> Result<Expression> {
     match expr {
         Expr::BinaryOp { left, op, right } => {
@@ -123,6 +124,7 @@ pub fn sql_expr_to_logical_expr(expr: &Expr) -> Result<Expression> {
     }
 }
 
+/// Converts a SQL binary operator (`BinaryOperator`) into an equivalent logical operator (`Operator`).
 pub fn parse_sql_binary_operator(op: &BinaryOperator) -> Result<Operator> {
     match op {
         BinaryOperator::Gt => Ok(Operator::Gt),
